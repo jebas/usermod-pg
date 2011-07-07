@@ -9,6 +9,22 @@ create table users.user(
 create table users.session(
 	sess_id		text		primary key,
 	name		text,
-	foreign key (sess_id) references web.session (sess_id),
+	foreign key (sess_id) references web.session (sess_id) on delete cascade,
 	foreign key (name) references users.user (name)
 );
+
+insert into users.user (name) values ('anonymous');
+
+create or replace function users.init_session() 
+returns trigger 
+as $$
+	begin
+		insert into users.session (sess_id, name) values (NEW.sess_id, 'anonymous');
+		return null;
+	end;
+$$ language plpgsql security definer;
+
+create trigger init_session 
+	after insert
+	on web.session
+	for each row execute procedure users.init_session();
