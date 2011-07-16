@@ -3,7 +3,9 @@
 create schema users;
 
 create table users.user(
-	name		text		primary key
+	name		text		primary key		check (length(name) > 4),
+	password	text,
+	email		text
 );
 
 create table users.session(
@@ -13,7 +15,7 @@ create table users.session(
 	foreign key (name) references users.user (name)
 );
 
-insert into users.user (name) values ('anonymous');
+insert into users.user (name, password, email) values ('anonymous', '', '');
 
 create or replace function users.init_session() 
 returns trigger 
@@ -28,3 +30,13 @@ create trigger init_session
 	after insert
 	on web.session
 	for each row execute procedure users.init_session();
+	
+create or replace function users.add(username text, password text, email text)
+returns void
+as $$
+	begin
+		insert into users.user (name, password, email) 
+			values (username, md5(password), email);
+		return;
+	end;
+$$ language plpgsql security definer;

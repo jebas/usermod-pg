@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(15);
+select plan(26);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -24,6 +24,12 @@ select has_table('users', 'user', 'There should be a users table.');
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
 select col_is_pk('users', 'user', 'name', 'The user name is the primary key');
+
+select has_column('users', 'user', 'password', 'Needs a password column');
+select col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
+
+select has_column('users', 'user', 'email', 'Needs an email column.');
+select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
 
 -- session table tests
 select has_table('users', 'session', 'There should be a session linking users to sessions.');
@@ -37,8 +43,8 @@ select col_is_fk('users', 'session', 'name', 'Should be foreign key to user name
 
 -- make sure there is an entry for the anonymous user.
 select results_eq(
-	$$select name from users.user where name = 'anonymous'$$,
-	$$values ('anonymous')$$,
+	$$select * from users.user where name = 'anonymous'$$,
+	$$values ('anonymous', '', '')$$,
 	'There should be an anonymous user installed with the database'
 );
 
@@ -66,6 +72,42 @@ select results_eq(
 	'select cast(count(*) as int) from users.session',
 	'values (0)',
 	'There should have been no user sessions available.'
+);
+
+-- Testing add users functions
+select has_function('users', 'add', array['text', 'text', 'text'], 'Needs an add user function.');
+select is_definer('users', 'add', array['text', 'text', 'text'], 'add should be definer security.');
+
+-- add user function should store information into the users table.
+delete from users.user where name = 'flintstone';  
+select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
+select results_eq(
+	$$select name from users.user where name = 'flintstone'$$,
+	$$values ('flintstone')$$,
+	'users.add should add to the database'
+);
+select results_ne(
+	$$select password from users.user where name = 'flintstone'$$,
+	$$values (null)$$,
+	'user password should not be null'
+);
+select results_ne(
+	$$select password from users.user where name = 'flintstone'$$,
+	$$values ('secret')$$,
+	'user password needs to be encrypted'
+);
+select results_eq(
+	$$select email from users.user where name = 'flintstone'$$,
+	$$values ('flintstone@bedrock.com')$$,
+	'user email should in the database.'
+);
+
+-- add user function should fail if the username is less that 5 characters.
+delete from users.user where name = 'four';  
+select throws_like(
+	$$select users.add('four', 'secret', 'four@numbers.org')$$,
+	'%"user_name_check"',
+	'There should be an error for short usernames.'
 );
 
 select * from finish();
