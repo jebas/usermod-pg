@@ -3,10 +3,13 @@
 create schema users;
 
 create table users.user(
+	active		boolean		default false,
 	name		text		primary key		check (length(name) > 4),
 	password	text,
 	email		text
 );
+
+insert into users.user (active, name, password, email) values (true, 'anonymous', '', '');
 
 create table users.session(
 	sess_id		text		primary key,
@@ -15,7 +18,11 @@ create table users.session(
 	foreign key (name) references users.user (name)
 );
 
-insert into users.user (name, password, email) values ('anonymous', '', '');
+create table users.unconfirmed(
+	link		uuid		primary key,
+	name		text,
+	foreign key (name) references users.user (name) on delete cascade
+);
 
 create or replace function users.init_session() 
 returns trigger 
@@ -32,11 +39,23 @@ create trigger init_session
 	for each row execute procedure users.init_session();
 	
 create or replace function users.add(username text, password text, email text)
-returns void
+returns uuid
 as $$
+	declare
+		thelink uuid;
 	begin
 		insert into users.user (name, password, email) 
 			values (username, md5(password), email);
-		return;
+		loop
+			begin
+				select uuid_generate_v4() into thelink;
+				insert into users.unconfirmed (link, name)
+					values (thelink, username);
+				return thelink;
+			exception
+				when unique_violation then
+					-- loop and try again.
+			end;
+		end loop;
 	end;
 $$ language plpgsql security definer;

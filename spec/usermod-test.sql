@@ -13,13 +13,17 @@ begin;
 
 \i pgtap.sql
 
-select plan(26);
+select plan(39);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
 
 -- user table tests
 select has_table('users', 'user', 'There should be a users table.');
+
+select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
+select col_type_is('users', 'user', 'active', 'boolean', 'Active needs to be boolean.');
+select col_has_default('users', 'user', 'active', 'Active needs a default value.');
 
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
@@ -41,10 +45,20 @@ select col_is_fk('users', 'session', 'sess_id', 'Should be foreign key to web.se
 select has_column('users', 'session', 'name', 'Session needs a user column.');
 select col_is_fk('users', 'session', 'name', 'Should be foreign key to user name.');
 
+-- unconfirmed users table
+select has_table('users', 'unconfirmed', 'There should be an unconfirmed users table.');
+
+select has_column('users', 'unconfirmed', 'link', 'The unconfirmed table needs a link column');
+select col_type_is('users', 'unconfirmed', 'link', 'uuid', 'link column needs to be a UUID.');
+select col_is_pk('users', 'unconfirmed', 'link', 'link needs to be primary key.');
+
+select has_column('users', 'unconfirmed', 'name', 'There should be a column for the user name.');
+select col_is_fk('users', 'unconfirmed', 'name', 'Should be a foreign key to user name.');
+
 -- make sure there is an entry for the anonymous user.
 select results_eq(
 	$$select * from users.user where name = 'anonymous'$$,
-	$$values ('anonymous', '', '')$$,
+	$$values (true, 'anonymous', '', '')$$,
 	'There should be an anonymous user installed with the database'
 );
 
@@ -77,10 +91,16 @@ select results_eq(
 -- Testing add users functions
 select has_function('users', 'add', array['text', 'text', 'text'], 'Needs an add user function.');
 select is_definer('users', 'add', array['text', 'text', 'text'], 'add should be definer security.');
+select function_returns('users', 'add', array['text', 'text', 'text'], 'uuid', 'Add needs to return a verification link.');
 
 -- add user function should store information into the users table.
 delete from users.user where name = 'flintstone';  
-select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
+create temp table newuserlink as select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
+select results_eq(
+	$$select active from users.user where name = 'flintstone'$$,
+	'values (false)',
+	'users.add should make an inactive user.'
+);
 select results_eq(
 	$$select name from users.user where name = 'flintstone'$$,
 	$$values ('flintstone')$$,
@@ -100,6 +120,16 @@ select results_eq(
 	$$select email from users.user where name = 'flintstone'$$,
 	$$values ('flintstone@bedrock.com')$$,
 	'user email should in the database.'
+);
+select results_eq(
+	$$select name from users.unconfirmed where name = 'flintstone'$$,
+	$$values ('flintstone')$$,
+	'Need to create an unconfirmed entry for new users.'
+);
+select results_eq(
+	'select * from newuserlink',
+	$$select link from users.unconfirmed where name = 'flintstone'$$,
+	'Returned value needs to be link in unconfirmed.'
 );
 
 -- add user function should fail if the username is less that 5 characters.
