@@ -122,7 +122,8 @@ describe('usermod-pg', function () {
 				return callCount != this.res.render.callCount;
 			}, 'Waiting on add user.', 10000);
 			runs(function () {
-				expect(this.res.render).toHaveBeenCalledWith('users/useradded');
+				expect(this.res.render).toHaveBeenCalledWith('users/useradded',
+						{'name': 'flintstone'});
 			});
 		});
 	});
