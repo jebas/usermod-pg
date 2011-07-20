@@ -7,7 +7,7 @@ releasing the information outside of the database.
 ## Requirements
 ###Production
 * Connect-PG
-* Node-email
+* Nodemailer
 * Express
 * PostgreSQL
 * PostgreSQL Contrib (specifically uuid_ossp)
@@ -17,7 +17,7 @@ releasing the information outside of the database.
 * pgTAP
 
 ## ToDo 
-* Add user from a form.
+* <del>Add user from a form.</del>
 * Have the system use email to check the new user (Spam protection).
 * Add Delete user functions (This is to remove pg from the JavaScript tests.)
 * Create a basic template for the user pages.
