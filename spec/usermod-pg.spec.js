@@ -197,4 +197,67 @@ describe('usermod-pg', function () {
 			});
 		});
 	});
+	
+	describe('user validation', function () {
+		it('should have a user validation function', function () {
+			expect(typeof users.validate).toEqual('function');
+		});
+		
+		it('should call invalid page when validation fails', function () {
+			var res = {'render': jasmine.createSpy()};
+			var req = {'params': {'link': 'ReallyBadLink'}};
+			var callCount = res.render.callCount;
+			users.validate(req, res);
+			waitsFor(function () {
+				return callCount != res.render.callCount;
+			}, 'Waiting on validate', 10000);
+			runs(function () {
+				expect(res.render).toHaveBeenCalledWith('users/novalidation');
+			});
+		});
+		
+		it('should call validated page when validation succeeds', function () {
+			var res = {'render': jasmine.createSpy()};
+			var req = {
+				'body': {
+					'username': 'flintstone',
+					'password1': 'secret',
+					'password2': 'secret',
+					'email': 'flintstone@bedrock.com'
+				},
+				'header': {
+					'host': 'testing.com'
+				}
+			};
+			var smtp = {
+				'send_mail': jasmine.createSpy()	
+			};
+			users.setMail(smtp);
+			users.setVerificationEmailRender(function (text) {
+				return text;
+			});
+			var callCount = res.render.callCount;
+			users.add(req, res);
+			waitsFor(function () {
+				return callCount != res.render.callCount;
+			}, 'Waiting on add user.', 10000);
+			runs(function () {
+				res = {'render': jasmine.createSpy()};
+				req = {'params': {'link': smtp.send_mail.mostRecentCall.args[0].body}};
+				callCount = res.render.callCount;
+				users.validate(req, res);
+				waitsFor(function () {
+					return callCount != res.render.callCount;
+				}, 'Waiting on validate', 10000);
+				runs(function () {
+					expect(res.render).toHaveBeenCalledWith('users/validation');
+				});
+			});
+			runs(function () {
+				pg.connect(connectStr, function(err, client) {
+					client.query("delete from users.user where name = 'flintstone'");
+				});
+			});
+		});
+	});
 });

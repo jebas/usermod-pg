@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(39);
+select plan(46);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -138,6 +138,40 @@ select throws_like(
 	$$select users.add('four', 'secret', 'four@numbers.org')$$,
 	'%"user_name_check"',
 	'There should be an error for short usernames.'
+);
+
+-- testing validate user functions
+select has_function('users', 'validate', array['uuid'], 'Needs an validate user function.');
+select is_definer('users', 'validate', array['uuid'], 'validate should be definer security.');
+select function_returns('users', 'validate', array['uuid'], 'boolean', 'Validate returns pass or fail.');
+
+-- validate returns false if link is bad.
+select results_eq(
+	'select users.validate(uuid_nil())',
+	'values (false)',
+	'Validate should return a false for nonexistent links.'
+);
+
+-- validate returns true for valid links.
+delete from users.user where name = 'flintstone';  
+select results_eq(
+	$$select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'))$$,
+	'values (true)',
+	'Validate should return true for existing links.'
+);
+
+-- valid links should activate a user.
+select results_eq(
+	$$select active from users.user where name = 'flintstone'$$,
+	'values (true)',
+	'Validate should activate the user.'
+);
+
+-- valid links should remove user from the unconfirmed table.
+select results_eq(
+	$$select cast(count(*) as int) from users.unconfirmed where name = 'flintstone'$$,
+	$$values (0)$$,
+	'Validate should remove entries from unconfirmed table.'
 );
 
 select * from finish();

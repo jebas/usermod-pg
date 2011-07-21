@@ -59,3 +59,20 @@ as $$
 		end loop;
 	end;
 $$ language plpgsql security definer;
+
+create or replace function users.validate(thelink uuid)
+returns boolean
+as $$
+	begin
+		update users.user 
+			set active = true 
+			where name = (select name from users.unconfirmed
+				where link = thelink);
+		if found then
+			delete from users.unconfirmed where link = thelink;
+			return true;
+		else
+			return false;
+		end if;
+	end;
+$$ language plpgsql security definer;

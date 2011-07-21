@@ -18,7 +18,7 @@ releasing the information outside of the database.
 
 ## ToDo 
 * <del>Add user from a form.</del>
-* Have the system use email to check the new user (Spam protection).
+* <del>Have the system use email to check the new user (Spam protection).</del>
 * Add Delete user functions (This is to remove pg from the JavaScript tests.)
 * Create a basic template for the user pages.
 * Add a hidden field to the new user form to catch spammers.
