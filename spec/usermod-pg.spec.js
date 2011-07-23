@@ -88,6 +88,7 @@ describe('usermod-pg', function () {
 		afterEach(function () {
 			pg.connect(connectStr, function(err, client) {
 				client.query("delete from users.user where name = 'flintstone'");
+				client.query("delete from users.user where name = 'FLINTSTONE'");
 			});
 		});
 		
@@ -167,6 +168,45 @@ describe('usermod-pg', function () {
 			});
 		});
 		
+		it('should return add user if user is already used', function () {
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'Waiting on add user.', 10000);
+			runs(function () {
+				var res2 = {'render': jasmine.createSpy()};
+				callCount = res2.render.callCount;
+				users.add(this.req, res2);
+				waitsFor(function () {
+					return callCount != res2.render.callCount;
+				}, 'Waiting on second add user.', 10000);
+				runs(function () {
+					expect(res2.render).toHaveBeenCalledWith('users/newuser');
+				});
+			});
+		});
+
+		it('should return add user if user is already used with different cases', function () {
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'Waiting on add user.', 10000);
+			runs(function () {
+				var res2 = {'render': jasmine.createSpy()};
+				callCount = res2.render.callCount;
+				this.req.body.username = 'FLINTSTONE';
+				users.add(this.req, res2);
+				waitsFor(function () {
+					return callCount != res2.render.callCount;
+				}, 'Waiting on add user.', 10000);
+				runs(function () {
+					expect(res2.render).toHaveBeenCalledWith('users/newuser');
+				});
+			});
+		});
+		
 		it('should send verification email', function () {
 			var callCount = this.res.render.callCount;
 			users.add(this.req, this.res);
@@ -184,6 +224,19 @@ describe('usermod-pg', function () {
 			});
 		});
 		
+		it('should trim www off of sender', function () {
+			this.req.header.host = 'www.testing.com';
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'Waiting on add user.', 10000);
+			runs(function () {
+				var holder = this.smtp.send_mail.mostRecentCall.args[0];
+				expect(holder.sender).toEqual('noreply@testing.com');
+			});
+		});
+		
 		it('should send an email body with a UUID as a link', function () {
 			var uuidTest = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
 			var callCount = this.res.render.callCount;
@@ -196,68 +249,41 @@ describe('usermod-pg', function () {
 				expect(uuidTest.test(holder.body)).toBeTruthy();
 			});
 		});
-	});
-	
-	describe('user validation', function () {
+		
 		it('should have a user validation function', function () {
 			expect(typeof users.validate).toEqual('function');
 		});
 		
 		it('should call invalid page when validation fails', function () {
-			var res = {'render': jasmine.createSpy()};
-			var req = {'params': {'link': 'ReallyBadLink'}};
-			var callCount = res.render.callCount;
-			users.validate(req, res);
+			this.req.params = {'link': 'ReallyBadLink'};
+			var callCount = this.res.render.callCount;
+			users.validate(this.req, this.res);
 			waitsFor(function () {
-				return callCount != res.render.callCount;
+				return callCount != this.res.render.callCount;
 			}, 'Waiting on validate', 10000);
 			runs(function () {
-				expect(res.render).toHaveBeenCalledWith('users/novalidation');
+				expect(this.res.render).toHaveBeenCalledWith('users/novalidation');
 			});
 		});
 		
 		it('should call validated page when validation succeeds', function () {
-			var res = {'render': jasmine.createSpy()};
-			var req = {
-				'body': {
-					'username': 'flintstone',
-					'password1': 'secret',
-					'password2': 'secret',
-					'email': 'flintstone@bedrock.com'
-				},
-				'header': {
-					'host': 'testing.com'
-				}
-			};
-			var smtp = {
-				'send_mail': jasmine.createSpy()	
-			};
-			users.setMail(smtp);
-			users.setVerificationEmailRender(function (text) {
-				return text;
-			});
-			var callCount = res.render.callCount;
-			users.add(req, res);
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
 			waitsFor(function () {
-				return callCount != res.render.callCount;
+				return callCount != this.res.render.callCount;
 			}, 'Waiting on add user.', 10000);
 			runs(function () {
-				res = {'render': jasmine.createSpy()};
-				req = {'params': {'link': smtp.send_mail.mostRecentCall.args[0].body}};
-				callCount = res.render.callCount;
-				users.validate(req, res);
+				var res2 = {'render': jasmine.createSpy()};
+				var req2 = {'params': {'link': this.smtp.send_mail.mostRecentCall.args[0].body}};
+				callCount = res2.render.callCount;
+				users.validate(req2, res2);
 				waitsFor(function () {
-					return callCount != res.render.callCount;
+					return callCount != res2.render.callCount;
 				}, 'Waiting on validate', 10000);
 				runs(function () {
-					expect(res.render).toHaveBeenCalledWith('users/validation');
+					expect(res2.render).toHaveBeenCalledWith('users/validation');
 				});
 			});
-			runs(function () {
-				pg.connect(connectStr, function(err, client) {
-					client.query("delete from users.user where name = 'flintstone'");
-				});
-			});
-		});
+		});	
 	});
 });

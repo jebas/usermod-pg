@@ -3,32 +3,37 @@
 create schema users;
 
 create table users.user(
+	id			uuid		primary key,
 	active		boolean		default false,
-	name		text		primary key		check (length(name) > 4),
+	name		text		check (length(name) > 4),
 	password	text,
 	email		text
 );
 
-insert into users.user (active, name, password, email) values (true, 'anonymous', '', '');
+create unique index username on users.user (lower(name)); 
+
+insert into users.user (id, active, name, password, email) 
+	values (uuid_nil(), true, 'anonymous', '', '');
 
 create table users.session(
 	sess_id		text		primary key,
-	name		text,
+	user_id		uuid,
 	foreign key (sess_id) references web.session (sess_id) on delete cascade,
-	foreign key (name) references users.user (name)
+	foreign key (user_id) references users.user (id)
 );
 
 create table users.unconfirmed(
 	link		uuid		primary key,
-	name		text,
-	foreign key (name) references users.user (name) on delete cascade
+	user_id		uuid,
+	expire		timestamp with time zone	default now() + interval '7 days',
+	foreign key (user_id) references users.user (id) on delete cascade
 );
 
 create or replace function users.init_session() 
 returns trigger 
 as $$
 	begin
-		insert into users.session (sess_id, name) values (NEW.sess_id, 'anonymous');
+		insert into users.session (sess_id, user_id) values (NEW.sess_id, uuid_nil());
 		return null;
 	end;
 $$ language plpgsql security definer;
@@ -38,25 +43,35 @@ create trigger init_session
 	on web.session
 	for each row execute procedure users.init_session();
 	
+create or replace function users.expire_unconfirmed()
+returns trigger
+as $$
+	begin
+		delete from users.user 
+			where id = (select user_id from users.unconfirmed where expire < now());
+		return null;
+	end;
+$$ language plpgsql security definer;
+
+create trigger expire_unconfirmed
+	after insert
+	on web.session
+	execute procedure users.expire_unconfirmed();
+	
 create or replace function users.add(username text, password text, email text)
 returns uuid
 as $$
 	declare
+		usersid	uuid;
 		thelink uuid;
 	begin
-		insert into users.user (name, password, email) 
-			values (username, md5(password), email);
-		loop
-			begin
-				select uuid_generate_v4() into thelink;
-				insert into users.unconfirmed (link, name)
-					values (thelink, username);
-				return thelink;
-			exception
-				when unique_violation then
-					-- loop and try again.
-			end;
-		end loop;
+		select uuid_generate_v4() into usersid;
+		insert into users.user (id, name, password, email) 
+			values (usersid, username, md5(password), email);
+		select uuid_generate_v4() into thelink;
+		insert into users.unconfirmed (link, user_id)
+			values (thelink, usersid);
+		return thelink;
 	end;
 $$ language plpgsql security definer;
 
@@ -66,7 +81,7 @@ as $$
 	begin
 		update users.user 
 			set active = true 
-			where name = (select name from users.unconfirmed
+			where id = (select user_id from users.unconfirmed
 				where link = thelink);
 		if found then
 			delete from users.unconfirmed where link = thelink;

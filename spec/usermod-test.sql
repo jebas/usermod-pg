@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(46);
+select plan(52);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -21,13 +21,16 @@ select has_schema('users', 'There should be a schema for users.');
 -- user table tests
 select has_table('users', 'user', 'There should be a users table.');
 
+select has_column('users', 'user', 'id', 'Needs to have a unique user id.');
+select col_type_is('users', 'user', 'id', 'uuid', 'User id needs to ba a UUID.');
+select col_is_pk('users', 'user', 'id', 'The user name is the primary key');
+
 select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
 select col_type_is('users', 'user', 'active', 'boolean', 'Active needs to be boolean.');
 select col_has_default('users', 'user', 'active', 'Active needs a default value.');
 
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
-select col_is_pk('users', 'user', 'name', 'The user name is the primary key');
 
 select has_column('users', 'user', 'password', 'Needs a password column');
 select col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
@@ -42,8 +45,8 @@ select has_column('users', 'session', 'sess_id', 'sessions needs to have a sessi
 select col_is_pk('users', 'session', 'sess_id', 'Session ids need to be the primary key.');
 select col_is_fk('users', 'session', 'sess_id', 'Should be foreign key to web.session.');
 
-select has_column('users', 'session', 'name', 'Session needs a user column.');
-select col_is_fk('users', 'session', 'name', 'Should be foreign key to user name.');
+select has_column('users', 'session', 'user_id', 'Session needs a user column.');
+select col_is_fk('users', 'session', 'user_id', 'Should be foreign key to user name.');
 
 -- unconfirmed users table
 select has_table('users', 'unconfirmed', 'There should be an unconfirmed users table.');
@@ -52,13 +55,17 @@ select has_column('users', 'unconfirmed', 'link', 'The unconfirmed table needs a
 select col_type_is('users', 'unconfirmed', 'link', 'uuid', 'link column needs to be a UUID.');
 select col_is_pk('users', 'unconfirmed', 'link', 'link needs to be primary key.');
 
-select has_column('users', 'unconfirmed', 'name', 'There should be a column for the user name.');
-select col_is_fk('users', 'unconfirmed', 'name', 'Should be a foreign key to user name.');
+select has_column('users', 'unconfirmed', 'user_id', 'There should be a column for the user id.');
+select col_is_fk('users', 'unconfirmed', 'user_id', 'Should be a foreign key to user name.');
+
+select has_column('users', 'unconfirmed', 'expire', 'There should be an expiration column');
+select col_type_is('users', 'unconfirmed', 'expire', 'timestamp with time zone', 'expire should be a timestamp.');
+select col_has_default('users', 'unconfirmed', 'expire', 'expiration needs a default setting.');
 
 -- make sure there is an entry for the anonymous user.
 select results_eq(
 	$$select * from users.user where name = 'anonymous'$$,
-	$$values (true, 'anonymous', '', '')$$,
+	$$values (uuid_nil(), true, 'anonymous', '', '')$$,
 	'There should be an anonymous user installed with the database'
 );
 
@@ -66,8 +73,8 @@ select results_eq(
 select web.clear_sessions();
 select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
 select results_eq(
-	$$select sess_id, name from users.session where sess_id = 'flintstone'$$,
-	$$values ('flintstone', 'anonymous')$$,
+	$$select sess_id, user_id from users.session where sess_id = 'flintstone'$$,
+	$$values ('flintstone', uuid_nil())$$,
 	'New sessions should be assigned to the anonymous user.'
 );
 
@@ -122,14 +129,14 @@ select results_eq(
 	'user email should in the database.'
 );
 select results_eq(
-	$$select name from users.unconfirmed where name = 'flintstone'$$,
-	$$values ('flintstone')$$,
+	$$select user_id from users.unconfirmed where link = (select add from newuserlink)$$,
+	$$select id from users.user where name = 'flintstone'$$,
 	'Need to create an unconfirmed entry for new users.'
 );
 select results_eq(
-	'select * from newuserlink',
-	$$select link from users.unconfirmed where name = 'flintstone'$$,
-	'Returned value needs to be link in unconfirmed.'
+	$$select expire > now() from users.unconfirmed where link = (select add from newuserlink)$$,
+	'values (true)',
+	'Confirmation expiration must be in the future.'
 );
 
 -- add user function should fail if the username is less that 5 characters.
@@ -169,9 +176,23 @@ select results_eq(
 
 -- valid links should remove user from the unconfirmed table.
 select results_eq(
-	$$select cast(count(*) as int) from users.unconfirmed where name = 'flintstone'$$,
+	$$select cast(count(*) as int) from users.unconfirmed 
+		where user_id = (select id from users.user where name = 'flintstone')$$,
 	$$values (0)$$,
 	'Validate should remove entries from unconfirmed table.'
+);
+
+-- unconfirmed users should be deleted after they time out.  
+delete from users.user where name = 'flintstone'; 
+select web.clear_sessions();
+select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
+update users.unconfirmed set expire = now() - interval '1 day' 
+	where user_id = (select id from users.user where name = 'flintstone');
+select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
+select results_eq(
+	$$select cast(count(*) as int) from users.user where name = 'flintstone'$$,
+	$$values (0)$$,
+	'Expired unconfirmed users should be deleted with each session change.'
 );
 
 select * from finish();
