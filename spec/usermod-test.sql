@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(52);
+select plan(59);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -193,6 +193,53 @@ select results_eq(
 	$$select cast(count(*) as int) from users.user where name = 'flintstone'$$,
 	$$values (0)$$,
 	'Expired unconfirmed users should be deleted with each session change.'
+);
+
+-- has a login function
+select has_function('users', 'login', array['text', 'text', 'text'], 'Needs an login function.'); 
+select is_definer('users', 'login', array['text', 'text', 'text'], 'login should be definer security.');
+select function_returns('users', 'login', array['text', 'text', 'text'], 'boolean', 'Login needs to return the login status.');
+
+-- login should return failed if a bad user is chosen.  
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'secret')$$,
+	'values (false)',
+	'A bad user login should return false.'
+);
+
+-- login should fail if the password is incorrect.
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'super secret')$$,
+	'values (false)',
+	'A bad user login should return false.'
+);
+
+-- login should pass is username and password are correct.
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'secret')$$,
+	'values (true)',
+	'A good username and password should pass.'
+);
+
+-- login should change the user_id of the session.  
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.login('session1', 'flintstone', 'secret');
+select results_eq(
+	$$select user_id from users.session where sess_id = 'session1'$$,
+	$$select id from users.user where name = 'flintstone'$$,
+	'Session id should be associated with the user.'
 );
 
 select * from finish();

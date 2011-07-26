@@ -91,3 +91,24 @@ as $$
 		end if;
 	end;
 $$ language plpgsql security definer;
+
+create or replace function users.login(thesession text, theusername text, thepassword text)
+returns boolean
+as $$
+	declare
+		the_user_id		uuid;
+	begin
+		select id into the_user_id 
+			from users.user
+			where name = theusername and
+				password = md5(thepassword);
+		if found then
+			update users.session
+				set user_id = the_user_id
+				where sess_id = thesession;
+			return true;
+		else
+			return false;
+		end if;
+	end;
+$$ language plpgsql security definer;

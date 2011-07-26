@@ -286,4 +286,24 @@ describe('usermod-pg', function () {
 			});
 		});	
 	});
+	
+	describe('login', function () {
+		it('should have a login function', function () {
+			expect(typeof users.login).toEqual('function');
+		});
+		
+		it('should return the original page if it fails to log on', function () {
+			var req = {'body': {}};
+			var res = {'redirect': jasmine.createSpy()};
+			var callCount = res.redirect.callCount;
+			users.login(req, res);
+			waitsFor(function () {
+				return callCount != res.redirect.callCount;
+			}, 'Waiting for response', 10000);
+			runs(function () {
+				expect(res.redirect).toHaveBeenCalled();
+				expect(res.redirect).toHaveBeenCalledWith('back');
+			});
+		});
+	});
 });
