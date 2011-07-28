@@ -25,6 +25,6 @@ releasing the information outside of the database.
 * Add a reset password function.
 * Protect user anonymous from changes.
 * Add functions to activate and deactivate users.
-* Make sure user.sessions remained linked if user name changes.
-* Give the users the ability to log in.  
+* <del>Make sure user.sessions remained linked if user name changes.</del>
+* <del>Give the users the ability to log in.</del>  
 * Add the ability to create user groups.  

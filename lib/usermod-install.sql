@@ -112,3 +112,28 @@ as $$
 		end if;
 	end;
 $$ language plpgsql security definer;
+
+create or replace function users.get_user(session_id text)
+returns text
+as $$
+	declare 
+		username		text;
+	begin
+		select users.user.name into username from users.user, users.session
+			where users.session.user_id = users.user.id and 
+			users.session.sess_id = session_id;
+		if not found then
+			select 'anonymous' into username;
+		end if;
+		return username;
+	end;
+$$ language plpgsql security definer;
+
+create or replace function users.logout(session_id text)
+returns void
+as $$
+	begin
+		update users.session set user_id = uuid_nil()
+			where sess_id = session_id;
+	end;
+$$ language plpgsql security definer;

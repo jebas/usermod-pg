@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(59);
+select plan(69);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -240,6 +240,58 @@ select results_eq(
 	$$select user_id from users.session where sess_id = 'session1'$$,
 	$$select id from users.user where name = 'flintstone'$$,
 	'Session id should be associated with the user.'
+);
+
+-- There should be a get_user function.  
+select has_function('users', 'get_user', array['text'], 'Needs an get user function.');
+select is_definer('users', 'get_user', array['text'], 'get_user should be definer security.');
+select function_returns('users', 'get_user', array['text'], 'text', 'get_user needs to return a user name.');
+
+-- get_user should return anonymous for new sessions.
+select web.clear_sessions();
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select results_eq(
+	$$select users.get_user('session1')$$,
+	$$values ('anonymous')$$,
+	'New sessions should return anonymous'
+);
+
+-- get_user should return the username of the logged in user.
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.login('session1', 'flintstone', 'secret');
+select results_eq(
+	$$select users.get_user('session1')$$,
+	$$values ('flintstone')$$,
+	'New sessions should return anonymous'
+);
+
+-- get_user should return anonymous for a bad session key.
+select web.clear_sessions();
+select results_eq(
+	$$select users.get_user('session1')$$,
+	$$values ('anonymous')$$,
+	'A bad sessions should return anonymous'
+);
+
+-- There should be a logout function.  
+select has_function('users', 'logout', array['text'], 'Needs an logout function.');
+select is_definer('users', 'logout', array['text'], 'logout should be definer security.');
+select function_returns('users', 'logout', array['text'], 'void', 'logout needs to return a user name.');
+
+-- it should change the user back to anonymous.
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.login('session1', 'flintstone', 'secret');
+select users.logout('session1');
+select results_eq(
+	$$select users.get_user('session1')$$,
+	$$values ('anonymous')$$,
+	'Logout should set the session back to anonymous'
 );
 
 select * from finish();

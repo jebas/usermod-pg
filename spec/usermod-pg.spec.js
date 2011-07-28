@@ -5,6 +5,9 @@ var connectStr = "tcp://thetester:password@localhost/pgstore";
 var users = require('../');
 users.setConnect(connectStr);
 var pg = require('pg');
+var PGStore = require('connect-pg');
+var storeOptions = {pgConnect: connectStr};
+var pgStore = new PGStore(storeOptions);
 
 describe('usermod-pg', function () {
 	describe('PostgreSQL connection', function () {
@@ -287,22 +290,210 @@ describe('usermod-pg', function () {
 		});	
 	});
 	
-	describe('login', function () {
-		it('should have a login function', function () {
-			expect(typeof users.login).toEqual('function');
+	describe('logging procedures', function () {
+		beforeEach(function () {
+			pgStore.set('session1', {});
+			var res = {'render': jasmine.createSpy()};
+			var req = {
+				'body': {
+					'username': 'flintstone',
+					'password1': 'secret',
+					'password2': 'secret',
+					'email': 'flintstone@bedrock.com'
+				},
+				'header': {
+					'host': 'testing.com'
+				}
+			};
+			this.smtp = {
+				'send_mail': jasmine.createSpy()	
+			};
+			users.setMail(this.smtp);
+			users.setVerificationEmailRender(function (text) {
+				return text;
+			});
+			var callCount = res.render.callCount;
+			users.add(req, res);
+			waitsFor(function () {
+				return callCount != res.render.callCount;
+			}, 'Waiting on add user.', 10000);
+			runs(function () {
+				var res2 = {'render': jasmine.createSpy()};
+				var req2 = {'params': {'link': this.smtp.send_mail.mostRecentCall.args[0].body}};
+				callCount = res2.render.callCount;
+				users.validate(req2, res2);
+				waitsFor(function () {
+					return callCount != res2.render.callCount;
+				}, 'Waiting on validate', 10000);
+				runs(function () {});
+			});
+			this.req = {
+				'body': {
+					'username': 'flintstone',
+					'password': 'secret'
+				},
+				'params': {
+					'logingoto': '/someplaceelse'
+				},
+				'session': {
+					'key': 'session1'
+				}
+			};
+			this.res = {'redirect': jasmine.createSpy()};
 		});
 		
-		it('should return the original page if it fails to log on', function () {
-			var req = {'body': {}};
-			var res = {'redirect': jasmine.createSpy()};
-			var callCount = res.redirect.callCount;
-			users.login(req, res);
+		afterEach(function () {
+			pgStore.clear();
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			pg.connect(connectStr, function(err, client) {
+				client.query("delete from users.user where name = 'flintstone'", callback);
+			});
 			waitsFor(function () {
-				return callCount != res.redirect.callCount;
-			}, 'Waiting for response', 10000);
-			runs(function () {
-				expect(res.redirect).toHaveBeenCalled();
-				expect(res.redirect).toHaveBeenCalledWith('back');
+				return callCount != callback.callCount;
+			});
+		});
+				
+		describe('login', function () {
+			it('should have a login function', function () {
+				expect(typeof users.login).toEqual('function');
+			});
+			
+			it('should return the original page if it fails to log on', function () {
+				this.req.body = {};
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					expect(this.res.redirect).toHaveBeenCalled();
+					expect(this.res.redirect).toHaveBeenCalledWith('back');
+				});
+			});
+			
+			it('should return a given page if login successful', function () {
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					expect(this.res.redirect).toHaveBeenCalledWith('/someplaceelse');
+				});
+			});
+			
+			it('should return to original page if no extra page is given', function () {
+				this.req.params = {};
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					expect(this.res.redirect).toHaveBeenCalledWith('back');
+				});
+			});
+		});
+		
+		describe('Get User Name', function () {
+			it('should have a fetch user name function', function () {
+				expect(typeof users.getUser).toEqual('function');
+			});
+			
+			it('should return anonymous when the user is not logged in', function () {
+				var callback = jasmine.createSpy();
+				var callCount = callback.callCount;
+				users.getUser(this.req.session.key, callback);
+				waitsFor(function () {
+					return callCount != callback.callCount;
+				}, 'Waiting for a callback', 10000);
+				runs(function () {
+					expect(callback).toHaveBeenCalledWith(null, 'anonymous');
+				});
+			});
+			
+			it("should return the user's name when logged in", function () {
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					var callback = jasmine.createSpy();
+					callCount = callback.callCount;
+					users.getUser(this.req.session.key, callback);
+					waitsFor(function () {
+						return callCount != callback.callCount;
+					}, 'Waiting for a callback', 10000);
+					runs(function () {
+						expect(callback).toHaveBeenCalledWith(null, 'flintstone');
+					});
+				});
+			});
+			
+			it('should return anonymous for bad session ids', function () {
+				var callback = jasmine.createSpy();
+				var callCount = callback.callCount;
+				users.getUser('Frankenstein', callback);
+				waitsFor(function () {
+					return callCount != callback.callCount;
+				}, 'Waiting for a callback', 10000);
+				runs(function () {
+					expect(callback).toHaveBeenCalledWith(null, 'anonymous');
+				});
+			});
+		});
+		
+		describe('logout', function () {
+			it('should have a log out function', function () {
+				expect(typeof users.logout).toEqual('function');
+			});
+			
+			it('should send the user to the home page', function () {
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					var res = {'redirect': jasmine.createSpy()};
+					callCount = res.redirect.callCount;
+					users.logout(this.req, res);
+					waitsFor(function () {
+						return callCount != res.redirect.callCount;
+					}, 'Waiting for logout redirect', 10000);
+					runs(function () {
+						expect(res.redirect).toHaveBeenCalledWith('home');
+					});
+				});
+			});
+			
+			it('should set the user back to anonymous', function () {
+				var callCount = this.res.redirect.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.redirect.callCount;
+				}, 'Waiting for response', 10000);
+				runs(function () {
+					var res = {'redirect': jasmine.createSpy()};
+					callCount = res.redirect.callCount;
+					users.logout(this.req, res);
+					waitsFor(function () {
+						return callCount != res.redirect.callCount;
+					}, 'Waiting for logout redirect', 10000);
+					runs(function () {
+						var callback = jasmine.createSpy();
+						callCount = callback.callCount;
+						users.getUser(this.req.session.key, callback);
+						waitsFor(function () {
+							return callCount != callback.callCount;
+						}, 'Waiting for a callback', 10000);
+						runs(function () {
+							expect(callback).toHaveBeenCalledWith(null, 'anonymous');
+						});
+					});
+				});
 			});
 		});
 	});
