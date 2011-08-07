@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(69);
+select plan(38);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -23,20 +23,34 @@ select has_table('users', 'user', 'There should be a users table.');
 
 select has_column('users', 'user', 'id', 'Needs to have a unique user id.');
 select col_type_is('users', 'user', 'id', 'uuid', 'User id needs to ba a UUID.');
-select col_is_pk('users', 'user', 'id', 'The user name is the primary key');
-
-select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
-select col_type_is('users', 'user', 'active', 'boolean', 'Active needs to be boolean.');
-select col_has_default('users', 'user', 'active', 'Active needs a default value.');
+select col_is_pk('users', 'user', 'id', 'The user id is the primary key');
 
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
+select col_not_null('users', 'user', 'name', 'User name column cannot be null.');
 
 select has_column('users', 'user', 'password', 'Needs a password column');
 select col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
+select col_not_null('users', 'user', 'password', 'User passwork cannot be null.');
 
-select has_column('users', 'user', 'email', 'Needs an email column.');
-select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
+select results_eq(
+	$$select * from users.user where name = 'anonymous'$$,
+	$$values (uuid_nil(), 'anonymous', '')$$,
+	'There should be an anonymous user with an all zeros id.'
+);
+
+select results_eq(
+	$$select name from users.user where name = 'admin'$$,
+	$$values ('admin')$$,
+	'There should be an admin user.'
+);
+
+select throws_like(
+	$$insert into users.user (id, name, password) 
+	values (uuid_generate_v4(), 'ADMIN', 'admin')$$,
+	'%violates unique constraint%',
+	'User names should be unique, and case insensitive'
+);
 
 -- session table tests
 select has_table('users', 'session', 'There should be a session linking users to sessions.');
@@ -47,6 +61,198 @@ select col_is_fk('users', 'session', 'sess_id', 'Should be foreign key to web.se
 
 select has_column('users', 'session', 'user_id', 'Session needs a user column.');
 select col_is_fk('users', 'session', 'user_id', 'Should be foreign key to user name.');
+
+select web.clear_sessions();
+select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
+select results_eq(
+	$$select sess_id, user_id from users.session where sess_id = 'flintstone'$$,
+	$$values ('flintstone', uuid_nil())$$,
+	'New sessions should be assigned to the anonymous user.'
+);
+
+select web.clear_sessions();
+select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
+select web.set_session_data('rubble', 'barney', now() + interval '1 day');
+select web.set_session_data('slade', 'mister', now() + interval '1 day');
+select results_eq(
+	$$select sess_id, user_id from users.session$$,
+	$$values ('flintstone', uuid_nil()), ('rubble', uuid_nil()), ('slade', uuid_nil())$$,
+	'There should be three sessions for the anonymous user.'
+);
+select web.clear_sessions();
+select results_eq(
+	'select cast(count(*) as int) from users.session',
+	'values (0)',
+	'There should have been no user sessions available.'
+);
+
+-- Testing user info function.  
+select has_function('users', 'info', array['text'], 'Needs an user info function.');
+select is_definer('users', 'info', array['text'], 'info should have definer security.');
+select function_returns('users', 'info', array['text'], 'setof record', 'Info needs to return user information.');
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select results_eq(
+	$$select username from users.info('session1')$$,
+	$$values ('anonymous')$$,
+	'New web sessions should return the anonymous user.'	
+);
+
+-- Tests for user login.
+select has_function('users', 'login', array['text', 'text', 'text'], 'Needs an user login function.');
+select is_definer('users', 'login', array['text', 'text', 'text'], 'login should have definer security.');
+select function_returns('users', 'login', array['text', 'text', 'text'], 'boolean', 'login needs to return success or failure.');
+
+select web.clear_sessions();
+select results_eq(
+	$$select users.login('curly', 'larry', 'moe')$$,
+	'values (false)',
+	'login should return false for a bad data'
+);
+
+select web.clear_sessions();
+select results_eq(
+	$$select users.login('session1', 'admin', 'admin')$$,
+	'values (false)',
+	'login should return false for a good data but bad session.'
+);
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select results_eq(
+	$$select users.login('session1', 'admin', 'admin')$$,
+	'values (true)',
+	'login should return true for a good data'
+);
+select results_eq(
+	$$select user_id from users.session where sess_id = 'session1'$$,
+	$$select id from users.user where name = 'admin'$$,
+	'The user session must be assigned to the logged in user.'
+);
+
+-- logout function tests
+select has_function('users', 'logout', array['text'], 'Needs an user logout function.');
+select is_definer('users', 'logout', array['text'], 'logout should have definer security.');
+select function_returns('users', 'logout', array['text'], 'void', 'logout should not return anything.');
+
+-- it should change the user back to anonymous.
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.login('session1', 'admin', 'admin');
+select users.logout('session1');
+select results_eq(
+	$$select username from users.info('session1')$$,
+	$$values ('anonymous')$$,
+	'Logout should set the session back to anonymous'
+);
+
+
+/*
+select plan(105);
+
+select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
+select col_type_is('users', 'user', 'active', 'boolean', 'Active needs to be boolean.');
+select col_has_default('users', 'user', 'active', 'Active needs a default value.');
+
+
+select has_column('users', 'user', 'email', 'Needs an email column.');
+select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
+
+
+
+
+select results_eq(
+	$$select active, name, password from users.user where name = 'admin'$$,
+	$$values (true, 'admin', md5('admin'))$$,
+	'There should be an admin user with the password admin.'
+);
+
+-- function list table tests
+select has_table('users', 'function', 'There should be a table for available functions');
+
+select has_column('users', 'function', 'id', 'Needs to have a unique function id.');
+select col_type_is('users', 'function', 'id', 'uuid', 'function id needs to ba a UUID.');
+select col_is_pk('users', 'function', 'id', 'The function id is the primary key');
+
+select has_column('users', 'function', 'code', 'Code a column of function names.');
+select col_type_is('users', 'function', 'code', 'text', 'Function code needs to be text');
+select col_not_null('users', 'function', 'code', 'Function code cannot be null');
+
+select has_column('users', 'function', 'args', 'Args a column of function names.');
+select col_type_is('users', 'function', 'args', 'integer', 'Function args needs to be int');
+select col_not_null('users', 'function', 'args', 'Function args cannot be null');
+
+insert into users.function (id, code, args) values 
+	(uuid_generate_v4(), 'some code', 0);
+select throws_like(
+	$$insert into users.function (id, code, args) values 
+		(uuid_generate_v4(), 'SOME CODE', 0)$$,
+	'%violates unique constraint%',
+	'Function code should be unique and case insensitive.'
+);
+delete from users.function where code = 'some code' or code = 'SOME CODE';
+
+-- 
+
+-- Tests for the login function
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'super secret')$$,
+	'values (false)',
+	'A bad user login should return false.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'secret')$$,
+	'values (false)',
+	'login should fail if the user is inactive.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select results_eq(
+	$$select users.login('session1', 'flintstone', 'secret')$$,
+	'values (true)',
+	'A good username and password should pass.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'flintstone'; 
+select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
+select web.set_session_data('session1', 'fred', now() + interval '1 day');
+select users.login('session1', 'flintstone', 'secret');
+select results_eq(
+	$$select user_id from users.session where sess_id = 'session1'$$,
+	$$select id from users.user where name = 'flintstone'$$,
+	'Session id should be associated with the user.'
+);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 -- unconfirmed users table
 select has_table('users', 'unconfirmed', 'There should be an unconfirmed users table.');
@@ -62,37 +268,65 @@ select has_column('users', 'unconfirmed', 'expire', 'There should be an expirati
 select col_type_is('users', 'unconfirmed', 'expire', 'timestamp with time zone', 'expire should be a timestamp.');
 select col_has_default('users', 'unconfirmed', 'expire', 'expiration needs a default setting.');
 
--- make sure there is an entry for the anonymous user.
-select results_eq(
-	$$select * from users.user where name = 'anonymous'$$,
-	$$values (uuid_nil(), true, 'anonymous', '', '')$$,
-	'There should be an anonymous user installed with the database'
+-- group table
+select has_table('users', 'group', 'There should be a group table.');
+
+select has_column('users', 'group', 'id', 'There should be a group id column');
+select col_type_is('users', 'group', 'id', 'uuid', 'The group id column should be a uuid');
+select col_is_pk('users', 'group', 'id', 'Groups id column needs to be the primary key');
+
+select has_column('users', 'group', 'name', 'Group needs a column for names.');
+select col_type_is('users', 'group', 'name', 'text', 'Group name needs to be text');
+
+select throws_like(
+	$$insert into users.group (id, name) values (uuid_generate_v4(), 'ADMIN')$$,
+	'%violates unique constraint%',
+	'Group names should be case insensetive unique.'
 );
 
--- New sessesions should be assigned an anonymous user.
-select web.clear_sessions();
-select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
-select results_eq(
-	$$select sess_id, user_id from users.session where sess_id = 'flintstone'$$,
-	$$values ('flintstone', uuid_nil())$$,
-	'New sessions should be assigned to the anonymous user.'
+-- user group link table
+select has_table('users', 'user_group_link', 'There needs to be a table that links users to groups.');
+
+select has_column('users', 'user_group_link', 'group_id', 'Group link needs a group id column.');
+select col_is_fk('users', 'user_group_link', 'group_id', 'Group id needs to link to groups id.');
+
+select has_column('users', 'user_group_link', 'owner', 'Needs tell if user is the owner of the group.');
+select col_type_is('users', 'user_group_link', 'owner', 'boolean', 'Group owner needs to be boolean.');
+select col_has_default('users', 'user_group_link', 'owner', 'Group ownder needs a default value.');
+
+select has_column('users', 'user_group_link', 'user_id', 'Group link needs a user id column.');
+select col_is_fk('users', 'user_group_link', 'user_id', 'User id needs to link to user id.');
+
+select throws_like(
+	$$insert into users.user_group_link (group_id, owner, user_id) values
+		((select id from users.group where name = 'admin'),
+		true,
+		(select id from users.user where name = 'admin'))$$,
+	'%violates unique constraint%',
+	'Allow group link to only have one user per group'
 );
 
--- User sessions should clear out with the web sessions.
-select web.clear_sessions();
-select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
-select web.set_session_data('rubble', 'barney', now() + interval '1 day');
-select web.set_session_data('slade', 'mister', now() + interval '1 day');
+-- Make sure the admin, everyone, and authenticated groups are created.
 select results_eq(
-	'select cast(count(*) as int) from users.session',
-	'values (3)',
-	'There should have been three user sessions available.'
+	$$select name from users.group$$,
+	$$values ('admin'), ('everyone'), ('authenticated')$$,
+	'There must be the initial three groups'
 );
-select web.clear_sessions();
+
+-- Make sure that the admin group belongs to and is owned by the admin user.  
 select results_eq(
-	'select cast(count(*) as int) from users.session',
-	'values (0)',
-	'There should have been no user sessions available.'
+	$$select users.group.name 
+		from
+			users.user,
+			users.group,
+			users.user_group_link
+		where
+			users.user.id = users.user_group_link.user_id and
+			users.group.id = users.user_group_link.group_id and
+			users.user.name = 'admin' and
+			users.user_group_link.owner = true$$,
+	$$values ('admin')$$,
+	'Make sure admin owns and is part of the admin group'
 );
 
 -- Testing add users functions
@@ -209,39 +443,6 @@ select results_eq(
 	'A bad user login should return false.'
 );
 
--- login should fail if the password is incorrect.
-delete from users.user where name = 'flintstone'; 
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select results_eq(
-	$$select users.login('session1', 'flintstone', 'super secret')$$,
-	'values (false)',
-	'A bad user login should return false.'
-);
-
--- login should pass is username and password are correct.
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select results_eq(
-	$$select users.login('session1', 'flintstone', 'secret')$$,
-	'values (true)',
-	'A good username and password should pass.'
-);
-
--- login should change the user_id of the session.  
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.login('session1', 'flintstone', 'secret');
-select results_eq(
-	$$select user_id from users.session where sess_id = 'session1'$$,
-	$$select id from users.user where name = 'flintstone'$$,
-	'Session id should be associated with the user.'
-);
-
 -- There should be a get_user function.  
 select has_function('users', 'get_user', array['text'], 'Needs an get user function.');
 select is_definer('users', 'get_user', array['text'], 'get_user should be definer security.');
@@ -276,24 +477,20 @@ select results_eq(
 	'A bad sessions should return anonymous'
 );
 
--- There should be a logout function.  
-select has_function('users', 'logout', array['text'], 'Needs an logout function.');
-select is_definer('users', 'logout', array['text'], 'logout should be definer security.');
-select function_returns('users', 'logout', array['text'], 'void', 'logout needs to return a user name.');
+-- There should be a function for getting owned groups.  
+select has_function('users', 'get_groups', array['text'], 'Needs a get groups you own function.');
+select is_definer('users', 'get_groups', array['text'], 'get groups should be definer security.');
+select function_returns('users', 'get_groups', array['text'], 'setof text', 'needs to return a list of groups.');
 
--- it should change the user back to anonymous.
 select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
 select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.login('session1', 'flintstone', 'secret');
-select users.logout('session1');
+select users.login('session1', 'admin', 'admin');
 select results_eq(
-	$$select users.get_user('session1')$$,
-	$$values ('anonymous')$$,
-	'Logout should set the session back to anonymous'
+	$$select users.get_groups('session1')$$,
+	$$values ('admin')$$,
+	'Get Groups should return the groups owned by the logged in user'
 );
-
+*/
 select * from finish();
 
 rollback;

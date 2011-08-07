@@ -10,21 +10,15 @@ releasing the information outside of the database.
 * Nodemailer
 * Express
 * PostgreSQL
-* PostgreSQL Contrib (specifically uuid_ossp)
+* PostgreSQL Contrib (specifically uuid_ossp and pgcrypto)
 
 ###Development
 * Jasmine-node
 * pgTAP
 
 ## ToDo 
-* <del>Add user from a form.</del>
-* <del>Have the system use email to check the new user (Spam protection).</del>
-* Add Delete user functions (This is to remove pg from the JavaScript tests.)
-* Create a basic template for the user pages.
-* Add a hidden field to the new user form to catch spammers.
-* Add a reset password function.
-* Protect user anonymous from changes.
-* Add functions to activate and deactivate users.
-* <del>Make sure user.sessions remained linked if user name changes.</del>
-* <del>Give the users the ability to log in.</del>  
-* Add the ability to create user groups.  
+* Figure out how to test for SQL errors. (Left a place marker for these.)
+* How to use pgTap for installing an upgrading the database.
+* Adding the group functions: create, delete, add user, add owner.
+* Adding a group for admin functions.  
+* Make the admin user part of the admin group.
