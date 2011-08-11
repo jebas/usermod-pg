@@ -152,7 +152,7 @@ describe('user', function () {
 			}, 'response from userid', 10000);
 			runs(function () {
 				expect(this.res.render).toHaveBeenCalledWith('401', 
-						{'error': 'Needs user name and password'}, 401);
+						{'error': 'Invalid username or password'}, 401);
 			});
 		});
 		
@@ -167,10 +167,37 @@ describe('user', function () {
 			});
 		});
 		
+		it('should call notification is login is successful', function () {
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.setNotificationCallback(callback);
+			users.login(this.req, this.res);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'notification callback', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith('session1', 'user_update');
+			});
+		});
+		
 		it('should return access denied if already logged in', function () {
-			/********
-			 ********
-			 ********/
+			var callCount = this.res.render.callCount;
+			users.login(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				this.res.render = jasmine.createSpy();
+				callCount = this.res.render.callCount;
+				users.login(this.req, this.res);
+				waitsFor(function () {
+					return callCount != this.res.render.callCount;
+				}, 'second response', 10000);
+				runs(function () {
+					expect(this.res.render).toHaveBeenCalledWith('401', 
+							{'error': 'Already logged in'}, 401);
+				});
+			});
 		});
 	});
 	
@@ -234,11 +261,88 @@ describe('user', function () {
 				});
 			});
 		});
+		
+		it('should call notification on logout', function () {
+			req = this.req;
+			res = this.res;
+			var callCount = res.render.callCount;
+			users.login(req, res);
+			waitsFor(function () {
+				return callCount != res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				var callback = jasmine.createSpy();
+				users.setNotificationCallback(callback);
+				callCount = callback.callCount;
+				users.logout(req, res);
+				waitsFor(function () {
+					return callCount != callback.callCount;
+				}, 'logout redirect', 10000);
+				runs(function () {
+					expect(callback).toHaveBeenCalledWith('session1', 'user_update');
+				});
+			});
+		});
 
 		it('should return access denied if already logged out', function () {
-			/********
-			 ********
-			 ********/
+			var callCount = this.res.render.callCount;
+			users.logout(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'logout response', 10000);
+			runs(function () {
+				expect(this.res.render).toHaveBeenCalledWith('401', 
+						{'error': 'Already logged out'}, 401);
+			});
+		});
+	});
+	
+	describe('set password', function () {
+		it('should have a users.setPassword function', function () {
+			expect(typeof users.setPassword).toEqual('function');
+		});
+		
+		it('should return error if there is no old and new password', function () {
+			var callCount = this.res.render.callCount;
+			users.login(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				var res = {'render': jasmine.createSpy()};
+				callCount = res.render.callCount;
+				users.setPassword(this.req, res);
+				waitsFor(function () {
+					return callCount != res.render.callCount;
+				}, 'setPassword response', 10000);
+				runs(function () {
+					expect(res.render).toHaveBeenCalledWith('400', 
+							{'error': 'Needs old and new password'}, 400);
+				});
+			});
+		});
+		
+		it('should return an error if the old password does not match user name', function () {
+			var callCount = this.res.render.callCount;
+			users.login(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				var res = {'render': jasmine.createSpy()};
+				this.req.params = {'username': 'admin'};
+				this.req.body.passwordOld = 'wrong';
+				this.req.body.passwordNew = 'superAdmin';
+				callCount = res.render.callCount;
+				users.setPassword(this.req, res);
+				waitsFor(function () {
+					return callCount != res.render.callCount;
+				}, 'setPassword response', 10000);
+				runs(function () {
+					expect(res.render).toHaveBeenCalledWith('401', 
+							{'error': 'Old password was incorrect'}, 401);
+				});
+			});
 		});
 	});
 });

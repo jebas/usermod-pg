@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(38);
+select plan(71);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -102,33 +102,42 @@ select results_eq(
 -- Tests for user login.
 select has_function('users', 'login', array['text', 'text', 'text'], 'Needs an user login function.');
 select is_definer('users', 'login', array['text', 'text', 'text'], 'login should have definer security.');
-select function_returns('users', 'login', array['text', 'text', 'text'], 'boolean', 'login needs to return success or failure.');
+select function_returns('users', 'login', array['text', 'text', 'text'], 'void', 'login uses errors for bad logins.');
 
 select web.clear_sessions();
-select results_eq(
-	$$select users.login('curly', 'larry', 'moe')$$,
-	'values (false)',
-	'login should return false for a bad data'
-);
-
-select web.clear_sessions();
-select results_eq(
+select throws_ok(
 	$$select users.login('session1', 'admin', 'admin')$$,
-	'values (false)',
-	'login should return false for a good data but bad session.'
+	'P0001',
+	'Invalid session',
+	'Only the anonymous user can use the login function.'
 );
 
 select web.clear_sessions();
 select web.set_session_data('session1', '{}', now() + interval '1 day');
-select results_eq(
-	$$select users.login('session1', 'admin', 'admin')$$,
-	'values (true)',
-	'login should return true for a good data'
+select throws_ok(
+	$$select users.login('session1', 'admin', 'wrong')$$,
+	'P0001',
+	'Invalid username or password',
+	'Only the anonymous user can use the login function.'
 );
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.login('session1', 'admin', 'admin');
 select results_eq(
 	$$select user_id from users.session where sess_id = 'session1'$$,
 	$$select id from users.user where name = 'admin'$$,
 	'The user session must be assigned to the logged in user.'
+);
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.login('session1', 'admin', 'admin');
+select throws_ok(
+	$$select users.login('session1', 'admin', 'admin')$$,
+	'P0001',
+	'Already logged in',
+	'Only the anonymous user can use the login function.'
 );
 
 -- logout function tests
@@ -136,7 +145,6 @@ select has_function('users', 'logout', array['text'], 'Needs an user logout func
 select is_definer('users', 'logout', array['text'], 'logout should have definer security.');
 select function_returns('users', 'logout', array['text'], 'void', 'logout should not return anything.');
 
--- it should change the user back to anonymous.
 select web.clear_sessions();
 select web.set_session_data('session1', '{}', now() + interval '1 day');
 select users.login('session1', 'admin', 'admin');
@@ -146,6 +154,116 @@ select results_eq(
 	$$values ('anonymous')$$,
 	'Logout should set the session back to anonymous'
 );
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select throws_ok(
+	$$select users.logout('session1')$$,
+	'P0001',
+	'Already logged out',
+	'The anonymous user cannot log out.'
+);
+
+-- Group table tests
+select has_table('users', 'group', 'There should be a group table.');
+
+select has_column('users', 'group', 'id', 'There should be a group id column');
+select col_type_is('users', 'group', 'id', 'uuid', 'The group id column should be a uuid');
+select col_is_pk('users', 'group', 'id', 'Groups id column needs to be the primary key');
+
+select has_column('users', 'group', 'name', 'Group needs a column for names.');
+select col_type_is('users', 'group', 'name', 'text', 'Group name needs to be text');
+select col_not_null('users', 'group', 'name', 'Group name column cannot be null.');
+
+select results_eq(
+	'select name from users.group',
+	$$values ('admin'), ('everyone'), ('authenticated')$$,
+	'Must have the three basic groups.'	
+);
+
+select throws_like(
+	$$insert into users.group (id, name) values (uuid_generate_v4(), 'ADMIN')$$,
+	'%violates unique constraint%',
+	'Group names should be case insensetive unique.'
+);
+
+-- Group user link table tests
+select has_table('users', 'group_user_link', 'There should be a table linking users to groups.');
+
+select has_column('users', 'group_user_link', 'group_id', 'Group user link should have a group link.');
+select col_is_fk('users', 'group_user_link', 'group_id', 'This is a foreign key to the group name.');
+
+select has_column('users', 'group_user_link', 'user_id', 'Group user link should have a user link.');
+select col_is_fk('users', 'group_user_link', 'user_id', 'This is a foreign key to the user name.');
+
+select col_is_pk('users', 'group_user_link', array['group_id', 'user_id'], 'Allow only one individual user entry per group');
+
+select results_eq(
+	$$
+	select 
+		users.group.name, 
+		users.user.name
+	from
+		users.user,
+		users.group,
+		users.group_user_link
+	where
+		users.user.id = users.group_user_link.user_id
+		and users.group.id = users.group_user_link.group_id
+	order by
+		users.group.name, 
+		users.user.name
+	$$,
+	$$
+	values
+		('admin', 'admin'),
+		('authenticated', 'admin'),
+		('everyone', 'admin'),
+		('everyone', 'anonymous')
+	$$,
+	'Needs to assign users to groups.'
+);
+
+-- Tests for the function name table.
+select has_table('users', 'function', 'There should be a function table.');
+
+select has_column('users', 'function', 'id', 'There should be a function id column');
+select col_type_is('users', 'function', 'id', 'uuid', 'The function id column should be a uuid');
+select col_is_pk('users', 'function', 'id', 'function id column needs to be the primary key');
+
+select has_column('users', 'function', 'name', 'function needs a column for names.');
+select col_type_is('users', 'function', 'name', 'text', 'function name needs to be text');
+select col_not_null('users', 'function', 'name', 'function name column cannot be null.');
+
+select has_function('users', 'add_function', array['text'], 'Needs an user add function function.');
+select is_definer('users', 'add_function', array['text'], 'add function should have definer security.');
+select function_returns('users', 'add_function', array['text'], 'void', 'add function should not return anything.');
+
+select users.add_function('testing_function');
+select results_eq(
+	$$select name from users.function where name = 'testing_function'$$,
+	$$values ('testing_function')$$,
+	'Add function should add function to the database.'
+);
+
+select throws_like(
+	$$select users.add_function('TESTING_FUNCTION')$$,
+	'%violates unique constraint%',
+	'Function names should be case insensetive unique.'
+);
+delete from users.function where name = 'testing_function';
+
+select bag_eq(
+	'select name from users.function',
+	array['users.login', 'users.logout', 'users.info'],
+	'Need to add the user functions '
+);
+
+-- set password function
+select has_function('users', 'set_password', array['text', 'text', 'text', 'text'], 'Needs an user set password function.');
+select is_definer('users', 'set_password', array['text', 'text', 'text', 'text'], 'logout should have definer security.');
+select function_returns('users', 'set_password', array['text', 'text', 'text', 'text'], 'void', 'logout should not return anything.');
+
 
 
 /*
@@ -269,20 +387,7 @@ select col_type_is('users', 'unconfirmed', 'expire', 'timestamp with time zone',
 select col_has_default('users', 'unconfirmed', 'expire', 'expiration needs a default setting.');
 
 -- group table
-select has_table('users', 'group', 'There should be a group table.');
 
-select has_column('users', 'group', 'id', 'There should be a group id column');
-select col_type_is('users', 'group', 'id', 'uuid', 'The group id column should be a uuid');
-select col_is_pk('users', 'group', 'id', 'Groups id column needs to be the primary key');
-
-select has_column('users', 'group', 'name', 'Group needs a column for names.');
-select col_type_is('users', 'group', 'name', 'text', 'Group name needs to be text');
-
-select throws_like(
-	$$insert into users.group (id, name) values (uuid_generate_v4(), 'ADMIN')$$,
-	'%violates unique constraint%',
-	'Group names should be case insensetive unique.'
-);
 
 -- user group link table
 select has_table('users', 'user_group_link', 'There needs to be a table that links users to groups.');
