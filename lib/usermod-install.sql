@@ -101,6 +101,59 @@ select users.add_function('users.login');
 select users.add_function('users.logout');
 select users.add_function('users.info');
 
+create table users.function_user_link(
+	function_id			uuid,
+	user_obj			uuid,
+	user_id				uuid,
+	foreign key (function_id) references users.function (id),
+	foreign key (user_obj) references users.user (id),
+	foreign key (user_id) references users.user (id),
+	primary key (function_id, user_obj, user_id)
+);
+
+insert into users.function_user_link (function_id, user_obj, user_id)
+	select id, uuid_nil(), uuid_nil() from users.function where name = 'users.login';
+
+create table users.function_group_link(
+	function_id			uuid,
+	user_obj			uuid,
+	group_id			uuid,
+	foreign key (function_id) references users.function (id),
+	foreign key (user_obj) references users.user (id),
+	foreign key (group_id) references users.group (id),
+	primary key (function_id, user_obj, group_id)
+);
+
+insert into users.function_group_link (function_id, user_obj, group_id)
+	select 
+		users.function.id,
+		users.user.id,
+		users.group.id
+	from
+		users.function,
+		users.user,
+		users.group
+	where
+		users.function.name = 'users.logout'
+		and users.user.name = 'anonymous'
+		and users.group.name = 'authenticated';
+
+insert into users.function_group_link (function_id, user_obj, group_id)
+	select 
+		users.function.id,
+		users.user.id,
+		users.group.id
+	from
+		users.function,
+		users.user,
+		users.group
+	where
+		users.function.name = 'users.info'
+		and 
+			(users.user.name = 'anonymous'
+			or users.user.name = 'admin')
+		and users.group.name = 'everyone';
+		
 create or replace function users.info(
 	in session_id text, 
 	out username text,
@@ -186,6 +239,7 @@ as $$
 	end;
 $$ language plpgsql security definer;
 
+/*
 create or replace function users.set_password(
 	session_id			text,
 	username			text,
@@ -198,7 +252,6 @@ as $$
 	end;
 $$ language plpgsql security definer;
 
-/*
 -- Create User Table with inital data.
 create table users.user(
 	id			uuid		primary key,

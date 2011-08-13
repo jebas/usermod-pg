@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(71);
+select plan(86);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -198,11 +198,11 @@ select col_is_fk('users', 'group_user_link', 'user_id', 'This is a foreign key t
 
 select col_is_pk('users', 'group_user_link', array['group_id', 'user_id'], 'Allow only one individual user entry per group');
 
-select results_eq(
+select bag_has	(
 	$$
 	select 
-		users.group.name, 
-		users.user.name
+		users.group.name as gname, 
+		users.user.name as uname
 	from
 		users.user,
 		users.group,
@@ -210,9 +210,6 @@ select results_eq(
 	where
 		users.user.id = users.group_user_link.user_id
 		and users.group.id = users.group_user_link.group_id
-	order by
-		users.group.name, 
-		users.user.name
 	$$,
 	$$
 	values
@@ -253,12 +250,85 @@ select throws_like(
 );
 delete from users.function where name = 'testing_function';
 
-select bag_eq(
+select bag_has(
 	'select name from users.function',
-	array['users.login', 'users.logout', 'users.info'],
+	$$values ('users.login'), ('users.logout'), ('users.info')$$,
 	'Need to add the user functions '
 );
 
+-- Funtion user table link tests
+select has_table('users', 'function_user_link', 'Needs a table that links function to users and objects');
+
+select has_column('users', 'function_user_link', 'function_id', 'Function user link should have a function link.');
+select col_is_fk('users', 'function_user_link', 'function_id', 'This is a foreign key to the function id.');
+
+select has_column('users', 'function_user_link', 'user_obj', 'Function user link should have a user link.');
+select col_is_fk('users', 'function_user_link', 'user_obj', 'This is a foreign key to the user id.');
+
+select has_column('users', 'function_user_link', 'user_id', 'Function user link should have a user link.');
+select col_is_fk('users', 'function_user_link', 'user_id', 'This is a foreign key to the user id.');
+
+select col_is_pk('users', 'function_user_link', array['function_id', 'user_obj', 'user_id'], 'Allow only one individual user entry per function.');
+
+select bag_has(
+	$$
+		select 
+			users.function.name as fname,
+			users.user.name as oname,
+			users.user.name as uname
+		from 
+			users.user,
+			users.function,
+			users.function_user_link
+		where
+			users.function.id = users.function_user_link.function_id
+			and users.user.id = users.function_user_link.user_obj
+			and users.user.id = users.function_user_link.user_id
+			and users.function.name = 'users.login'
+	$$,
+	$$values ('users.login', 'anonymous', 'anonymous')$$,
+	'anonymous needs to be the only one that can login.'
+);
+
+-- Funtion group table link tests
+select has_table('users', 'function_group_link', 'Needs a table that links function to users and objects');
+
+select has_column('users', 'function_group_link', 'function_id', 'Function user link should have a function link.');
+select col_is_fk('users', 'function_group_link', 'function_id', 'This is a foreign key to the function id.');
+
+select has_column('users', 'function_user_link', 'user_obj', 'Function user link should have a user link.');
+select col_is_fk('users', 'function_user_link', 'user_obj', 'This is a foreign key to the user id.');
+
+select has_column('users', 'function_group_link', 'group_id', 'Function user link should have a group link.');
+select col_is_fk('users', 'function_group_link', 'group_id', 'This is a foreign key to the group id.');
+
+select col_is_pk('users', 'function_group_link', array['function_id', 'user_obj', 'group_id'], 'Allow only one group user entry per function.');
+
+select bag_has(
+	$$
+		select
+			users.function.name as fname,
+			users.user.name as uname,
+			users.group.name as gname
+		from 
+			users.function,
+			users.user,
+			users.group,
+			users.function_group_link
+		where
+			users.function.id = users.function_group_link.function_id
+			and users.user.id = users.function_group_link.user_obj
+			and users.group.id = users.function_group_link.group_id
+	$$,
+	$$values 
+		('users.logout', 'anonymous', 'authenticated'),
+		('users.info', 'admin', 'everyone'),
+		('users.info', 'anonymous', 'everyone')
+	$$,
+	'logout and info need to be given to authenticated and everyone.'
+);
+
+/*
 -- set password function
 select has_function('users', 'set_password', array['text', 'text', 'text', 'text'], 'Needs an user set password function.');
 select is_definer('users', 'set_password', array['text', 'text', 'text', 'text'], 'logout should have definer security.');
@@ -266,7 +336,6 @@ select function_returns('users', 'set_password', array['text', 'text', 'text', '
 
 
 
-/*
 select plan(105);
 
 select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
@@ -276,15 +345,6 @@ select col_has_default('users', 'user', 'active', 'Active needs a default value.
 
 select has_column('users', 'user', 'email', 'Needs an email column.');
 select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
-
-
-
-
-select results_eq(
-	$$select active, name, password from users.user where name = 'admin'$$,
-	$$values (true, 'admin', md5('admin'))$$,
-	'There should be an admin user with the password admin.'
-);
 
 -- function list table tests
 select has_table('users', 'function', 'There should be a table for available functions');
