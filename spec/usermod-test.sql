@@ -108,7 +108,7 @@ select web.clear_sessions();
 select throws_ok(
 	$$select users.login('session1', 'admin', 'admin')$$,
 	'P0001',
-	'Invalid session',
+	'Not Authorized',
 	'Only the anonymous user can use the login function.'
 );
 
@@ -136,7 +136,7 @@ select users.login('session1', 'admin', 'admin');
 select throws_ok(
 	$$select users.login('session1', 'admin', 'admin')$$,
 	'P0001',
-	'Already logged in',
+	'Not Authorized',
 	'Only the anonymous user can use the login function.'
 );
 
@@ -160,7 +160,7 @@ select web.set_session_data('session1', '{}', now() + interval '1 day');
 select throws_ok(
 	$$select users.logout('session1')$$,
 	'P0001',
-	'Already logged out',
+	'Not Authorized',
 	'The anonymous user cannot log out.'
 );
 
@@ -327,6 +327,8 @@ select bag_has(
 	$$,
 	'logout and info need to be given to authenticated and everyone.'
 );
+
+
 
 /*
 -- set password function

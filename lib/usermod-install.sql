@@ -153,7 +153,45 @@ insert into users.function_group_link (function_id, user_obj, group_id)
 			(users.user.name = 'anonymous'
 			or users.user.name = 'admin')
 		and users.group.name = 'everyone';
-		
+
+create or replace function users.approval(
+	session_id		text,
+	function_name	text,
+	user_name		text)
+returns void
+as $$
+	declare
+		theuserid		uuid;
+	begin
+		select
+			users.session.user_id into theuserid
+		from
+			users.session,
+			users.user,
+			users.function,
+			users.group_user_link,
+			users.function_user_link,
+			users.function_group_link
+		where
+			(users.user.name = user_name
+				and users.user.id = users.function_user_link.user_obj
+				and users.function.name = function_name
+				and users.function.id = users.function_user_link.function_id
+				and users.session.sess_id = session_id
+				and users.session.user_id = users.function_user_link.user_id)
+			or (users.user.name = user_name
+				and users.user.id = users.function_group_link.user_obj
+				and users.function.name = function_name
+				and users.function.id = users.function_group_link.function_id
+				and users.function_group_link.group_id = users.group_user_link.group_id
+				and users.group_user_link.user_id = users.session.user_id
+				and users.session.sess_id = session_id);
+		if not found then
+			raise 'Not Authorized';
+		end if;
+	end;
+$$ language plpgsql security definer;
+
 create or replace function users.info(
 	in session_id text, 
 	out username text,
@@ -161,6 +199,7 @@ create or replace function users.info(
 returns setof record
 as $$
 	begin
+		perform users.approval(session_id, 'users.info', 'admin');
 		return query 
 			select 
 				users.user.name,
@@ -182,38 +221,25 @@ create or replace function users.login(
 returns void
 as $$
 	declare
-		prevuserid	uuid;
 		newuserid	uuid;
 	begin
+		perform users.approval(session_id, 'users.login', 'anonymous');
 		select
-			user_id into prevuserid
+			id into newuserid
 			from
-				users.session
+				users.user
 			where
-				users.session.sess_id = session_id;
-		if not found then 
-			raise 'Invalid session';
-		end if;
-		if prevuserid = uuid_nil() then
-			select
-				id into newuserid
-				from
-					users.user
+				name = username
+				and password = crypt(passwd, password);
+		if found then
+			update 
+				users.session
+				set
+					user_id = newuserid
 				where
-					name = username
-					and password = crypt(passwd, password);
-			if found then
-				update 
-					users.session
-					set
-						user_id = newuserid
-					where
-						sess_id = session_id;
-			else
-				raise 'Invalid username or password';
-			end if;
+					sess_id = session_id;
 		else
-			raise 'Already logged in';
+			raise 'Invalid username or password';
 		end if;
 	end;
 $$ language plpgsql security definer;
@@ -221,21 +247,10 @@ $$ language plpgsql security definer;
 create or replace function users.logout(session_id text)
 returns void
 as $$
-	declare
-		userid		uuid;
 	begin
-		select 
-			user_id into userid
-			from
-				users.session
-			where
-				sess_id = session_id;
-		if userid = uuid_nil() then
-			raise 'Already logged out';
-		else
-			update users.session set user_id = uuid_nil()
-				where sess_id = session_id;
-		end if;
+		perform users.approval(session_id, 'users.logout', 'anonymous');
+		update users.session set user_id = uuid_nil()
+			where sess_id = session_id;
 	end;
 $$ language plpgsql security definer;
 
