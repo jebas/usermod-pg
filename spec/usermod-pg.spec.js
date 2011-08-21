@@ -58,16 +58,6 @@ describe('user', function () {
 				expect(console.log).toHaveBeenCalled();
 			});
 		});
-		
-		it('should accept a notification callback function', function () {
-			expect(typeof users.setNotificationCallback).toEqual('function');
-		});
-		
-		it('should throw type error if callback is not a function', function () {
-			expect(function () {
-				users.setNotificationCallback('wrong');
-			}).toThrow(TypeError);
-		});
 	});
 	
 	describe('info', function () {
@@ -115,6 +105,18 @@ describe('user', function () {
 				});
 			});
 		});
+		
+		it('should accept a callback function', function () {
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.info(this.req, this.res, callback);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'info callback', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith(null, {});
+			});
+		});
 	});
 	
 	describe('login', function () {
@@ -143,6 +145,20 @@ describe('user', function () {
 			});
 		});
 		
+		it('should send the error in the callback with a malformed login', function () {
+			delete this.req.body;
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.login(this.req, this.res, callback);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith(
+						{'message': 'Needs user name and password'}, null);
+			});
+		});
+		
 		it('should fail if a bad username or password is sent', function () {
 			this.req.body.password = 'wrong';
 			var callCount = this.res.render.callCount;
@@ -153,6 +169,20 @@ describe('user', function () {
 			runs(function () {
 				expect(this.res.render).toHaveBeenCalledWith('401', 
 						{'error': 'Invalid username or password'}, 401);
+			});
+		});
+		
+		it('should have callback return the invalid password error', function () {
+			this.req.body.password = 'wrong';
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.login(this.req, this.res, callback);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith(
+						{'message': 'Invalid username or password'}, null);
 			});
 		});
 		
@@ -167,16 +197,17 @@ describe('user', function () {
 			});
 		});
 		
-		it('should call notification is login is successful', function () {
+		it('should call callback is login is successful', function () {
 			var callback = jasmine.createSpy();
 			var callCount = callback.callCount;
-			users.setNotificationCallback(callback);
-			users.login(this.req, this.res);
+			users.login(this.req, this.res, callback);
 			waitsFor(function () {
 				return callCount != callback.callCount;
 			}, 'notification callback', 10000);
 			runs(function () {
-				expect(callback).toHaveBeenCalledWith('session1', 'user_update');
+				expect(callback).toHaveBeenCalledWith(null,
+						{'sessionID': 'session1',
+						'update': 'personalInfo'});
 			});
 		});
 		
@@ -195,7 +226,7 @@ describe('user', function () {
 				}, 'second response', 10000);
 				runs(function () {
 					expect(this.res.render).toHaveBeenCalledWith('401', 
-							{'error': 'Already logged in'}, 401);
+							{'error': 'Not Authorized'}, 401);
 				});
 			});
 		});
@@ -272,14 +303,15 @@ describe('user', function () {
 			}, 'response from userid', 10000);
 			runs(function () {
 				var callback = jasmine.createSpy();
-				users.setNotificationCallback(callback);
 				callCount = callback.callCount;
-				users.logout(req, res);
+				users.logout(req, res, callback);
 				waitsFor(function () {
 					return callCount != callback.callCount;
 				}, 'logout redirect', 10000);
 				runs(function () {
-					expect(callback).toHaveBeenCalledWith('session1', 'user_update');
+					expect(callback).toHaveBeenCalledWith(null,
+							{'sessionID': 'session1',
+							'update': 'personalInfo'});
 				});
 			});
 		});
@@ -292,7 +324,64 @@ describe('user', function () {
 			}, 'logout response', 10000);
 			runs(function () {
 				expect(this.res.render).toHaveBeenCalledWith('401', 
-						{'error': 'Already logged out'}, 401);
+						{'error': 'Not Authorized'}, 401);
+			});
+		});
+		
+		it('should send an error to the callback if already logged out', function () {
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.logout(this.req, this.res, callback);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'logout response', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith({'message': 'Not Authorized'}, null);
+			});
+		});
+	});
+	
+	describe('add user', function () {
+		it('should have a function to add users', function () {
+			expect(typeof users.add).toEqual('function');
+		});
+		
+		it('should send an http error if there is not data', function () {
+			delete this.req.body;
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				expect(this.res.render).toHaveBeenCalledWith('400', 
+						{'error': 'Needs new user data'}, 400);
+			});
+		});
+		
+		it('should reflect the no data error in the callback', function () {
+			delete this.req.body;
+			var callback = jasmine.createSpy();
+			var callCount = callback.callCount;
+			users.add(this.req, this.res, callback);
+			waitsFor(function () {
+				return callCount != callback.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				expect(callback).toHaveBeenCalledWith(
+						{'message': 'Needs new user data'}, null);
+			});
+		});
+		
+		it('should fail if the user already exsists', function () {
+			var callCount = this.res.render.callCount;
+			users.add(this.req, this.res);
+			waitsFor(function () {
+				return callCount != this.res.render.callCount;
+			}, 'response from userid', 10000);
+			runs(function () {
+				expect(this.res.render).toHaveBeenCalledWith('400', 
+						{'error': 'User already exists'}, 400);
 			});
 		});
 	});
@@ -322,6 +411,7 @@ describe('user', function () {
 			});
 		});
 		
+		/*
 		it('should return an error if the old password does not match user name', function () {
 			var callCount = this.res.render.callCount;
 			users.login(this.req, this.res);
@@ -344,6 +434,7 @@ describe('user', function () {
 				});
 			});
 		});
+		*/
 	});
 });
 

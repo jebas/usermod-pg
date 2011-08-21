@@ -13,7 +13,7 @@ begin;
 
 \i pgtap.sql
 
-select plan(86);
+select plan(126);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
@@ -25,6 +25,11 @@ select has_column('users', 'user', 'id', 'Needs to have a unique user id.');
 select col_type_is('users', 'user', 'id', 'uuid', 'User id needs to ba a UUID.');
 select col_is_pk('users', 'user', 'id', 'The user id is the primary key');
 
+select has_column('users', 'user', 'active', 'Need a column of user status.');
+select col_type_is('users', 'user', 'active', 'boolean', 'Active user is boolean.');
+select col_not_null('users', 'user', 'active', 'User active column cannot be null.');
+select col_default_is('users', 'user', 'active', 'false', 'Active column should default to false');
+
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
 select col_not_null('users', 'user', 'name', 'User name column cannot be null.');
@@ -33,21 +38,33 @@ select has_column('users', 'user', 'password', 'Needs a password column');
 select col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
 select col_not_null('users', 'user', 'password', 'User passwork cannot be null.');
 
+select has_column('users', 'user', 'email', 'Needs an email column.');
+select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
+select col_not_null('users', 'user', 'email', 'User email column cannot be null.');
+
+select has_column('users', 'user', 'icon', 'Needs an icon column.');
+select col_type_is('users', 'user', 'icon', 'text', 'Icon needs to have a text input.');
+select col_is_null('users', 'user', 'icon', 'User icon column can be null.');
+
+select has_column('users', 'user', 'introduction', 'Needs an introduction column.');
+select col_type_is('users', 'user', 'introduction', 'text', 'Introduction needs to have a text input.');
+select col_is_null('users', 'user', 'introduction', 'User introduction column can be null.');
+
 select results_eq(
 	$$select * from users.user where name = 'anonymous'$$,
-	$$values (uuid_nil(), 'anonymous', '')$$,
+	$$values (uuid_nil(), true, 'anonymous', '', '', null, null)$$,
 	'There should be an anonymous user with an all zeros id.'
 );
 
 select results_eq(
-	$$select name from users.user where name = 'admin'$$,
-	$$values ('admin')$$,
+	$$select active, name from users.user where name = 'admin'$$,
+	$$values (true, 'admin')$$,
 	'There should be an admin user.'
 );
 
 select throws_like(
-	$$insert into users.user (id, name, password) 
-	values (uuid_generate_v4(), 'ADMIN', 'admin')$$,
+	$$insert into users.user (id, name, password, email) 
+	values (uuid_generate_v4(), 'ADMIN', 'admin', '')$$,
 	'%violates unique constraint%',
 	'User names should be unique, and case insensitive'
 );
@@ -87,16 +104,28 @@ select results_eq(
 );
 
 -- Testing user info function.  
-select has_function('users', 'info', array['text'], 'Needs an user info function.');
+select has_function('users', 'info', array['text', 'text'], 'Needs an user info function.');
+select is_definer('users', 'info', array['text', 'text'], 'info should have definer security.');
+select function_returns('users', 'info', array['text', 'text'], 'userinfo', 'Info needs to return user information.');
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select results_eq(
+	$$select username from users.info('session1', 'admin')$$,
+	$$values ('admin')$$,
+	'User info should return information about any user.'	
+);
+
+select has_function('users', 'info', array['text'], 'Needs an user info function for session.');
 select is_definer('users', 'info', array['text'], 'info should have definer security.');
-select function_returns('users', 'info', array['text'], 'setof record', 'Info needs to return user information.');
+select function_returns('users', 'info', array['text'], 'userinfo', 'Info needs to return user information.');
 
 select web.clear_sessions();
 select web.set_session_data('session1', '{}', now() + interval '1 day');
 select results_eq(
 	$$select username from users.info('session1')$$,
 	$$values ('anonymous')$$,
-	'New web sessions should return the anonymous user.'	
+	'The short users.info should return information about the session owner.'	
 );
 
 -- Tests for user login.
@@ -109,7 +138,7 @@ select throws_ok(
 	$$select users.login('session1', 'admin', 'admin')$$,
 	'P0001',
 	'Not Authorized',
-	'Only the anonymous user can use the login function.'
+	'Login cannot occur if session does not exist.'
 );
 
 select web.clear_sessions();
@@ -132,12 +161,32 @@ select results_eq(
 
 select web.clear_sessions();
 select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.login('session1', 'ADMIN', 'admin');
+select results_eq(
+	$$select user_id from users.session where sess_id = 'session1'$$,
+	$$select id from users.user where name = 'admin'$$,
+	'User login must be case independent.'
+);
+
+select web.clear_sessions();
+select web.set_session_data('session1', '{}', now() + interval '1 day');
 select users.login('session1', 'admin', 'admin');
 select throws_ok(
 	$$select users.login('session1', 'admin', 'admin')$$,
 	'P0001',
 	'Not Authorized',
 	'Only the anonymous user can use the login function.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'testuser'; 
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.add('session1', 'testuser', 'password', 'tester@test.com');
+select throws_ok(
+	$$select users.login('session1', 'testuser', 'password')$$,
+	'P0001',
+	'Not Authorized',
+	'Only active/validated users can log in.'
 );
 
 -- logout function tests
@@ -150,8 +199,8 @@ select web.set_session_data('session1', '{}', now() + interval '1 day');
 select users.login('session1', 'admin', 'admin');
 select users.logout('session1');
 select results_eq(
-	$$select username from users.info('session1')$$,
-	$$values ('anonymous')$$,
+	$$select user_id from users.session where sess_id = 'session1'$$,
+	$$values (uuid_nil())$$,
 	'Logout should set the session back to anonymous'
 );
 
@@ -273,20 +322,25 @@ select col_is_pk('users', 'function_user_link', array['function_id', 'user_obj',
 select bag_has(
 	$$
 		select 
-			users.function.name as fname,
-			users.user.name as oname,
-			users.user.name as uname
+			users.function_user_link.*
 		from 
-			users.user,
 			users.function,
 			users.function_user_link
 		where
 			users.function.id = users.function_user_link.function_id
-			and users.user.id = users.function_user_link.user_obj
-			and users.user.id = users.function_user_link.user_id
 			and users.function.name = 'users.login'
 	$$,
-	$$values ('users.login', 'anonymous', 'anonymous')$$,
+	$$
+		select 
+			users.function_user_link.*
+		from 
+			users.function,
+			users.function_user_link
+		where
+			users.function.id = users.function_user_link.function_id
+			and users.function.name = 'users.login'
+			and users.function_user_link.user_id = uuid_nil()
+	$$,
 	'anonymous needs to be the only one that can login.'
 );
 
@@ -328,112 +382,6 @@ select bag_has(
 	'logout and info need to be given to authenticated and everyone.'
 );
 
-
-
-/*
--- set password function
-select has_function('users', 'set_password', array['text', 'text', 'text', 'text'], 'Needs an user set password function.');
-select is_definer('users', 'set_password', array['text', 'text', 'text', 'text'], 'logout should have definer security.');
-select function_returns('users', 'set_password', array['text', 'text', 'text', 'text'], 'void', 'logout should not return anything.');
-
-
-
-select plan(105);
-
-select has_column('users', 'user', 'active', 'Needs to have an Active users column.');
-select col_type_is('users', 'user', 'active', 'boolean', 'Active needs to be boolean.');
-select col_has_default('users', 'user', 'active', 'Active needs a default value.');
-
-
-select has_column('users', 'user', 'email', 'Needs an email column.');
-select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
-
--- function list table tests
-select has_table('users', 'function', 'There should be a table for available functions');
-
-select has_column('users', 'function', 'id', 'Needs to have a unique function id.');
-select col_type_is('users', 'function', 'id', 'uuid', 'function id needs to ba a UUID.');
-select col_is_pk('users', 'function', 'id', 'The function id is the primary key');
-
-select has_column('users', 'function', 'code', 'Code a column of function names.');
-select col_type_is('users', 'function', 'code', 'text', 'Function code needs to be text');
-select col_not_null('users', 'function', 'code', 'Function code cannot be null');
-
-select has_column('users', 'function', 'args', 'Args a column of function names.');
-select col_type_is('users', 'function', 'args', 'integer', 'Function args needs to be int');
-select col_not_null('users', 'function', 'args', 'Function args cannot be null');
-
-insert into users.function (id, code, args) values 
-	(uuid_generate_v4(), 'some code', 0);
-select throws_like(
-	$$insert into users.function (id, code, args) values 
-		(uuid_generate_v4(), 'SOME CODE', 0)$$,
-	'%violates unique constraint%',
-	'Function code should be unique and case insensitive.'
-);
-delete from users.function where code = 'some code' or code = 'SOME CODE';
-
--- 
-
--- Tests for the login function
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select results_eq(
-	$$select users.login('session1', 'flintstone', 'super secret')$$,
-	'values (false)',
-	'A bad user login should return false.'
-);
-
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
-select results_eq(
-	$$select users.login('session1', 'flintstone', 'secret')$$,
-	'values (false)',
-	'login should fail if the user is inactive.'
-);
-
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select results_eq(
-	$$select users.login('session1', 'flintstone', 'secret')$$,
-	'values (true)',
-	'A good username and password should pass.'
-);
-
-select web.clear_sessions();
-delete from users.user where name = 'flintstone'; 
-select users.validate(users.add('flintstone', 'secret', 'flintstone@bedrock.com'));
-select web.set_session_data('session1', 'fred', now() + interval '1 day');
-select users.login('session1', 'flintstone', 'secret');
-select results_eq(
-	$$select user_id from users.session where sess_id = 'session1'$$,
-	$$select id from users.user where name = 'flintstone'$$,
-	'Session id should be associated with the user.'
-);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 -- unconfirmed users table
 select has_table('users', 'unconfirmed', 'There should be an unconfirmed users table.');
 
@@ -447,38 +395,134 @@ select col_is_fk('users', 'unconfirmed', 'user_id', 'Should be a foreign key to 
 select has_column('users', 'unconfirmed', 'expire', 'There should be an expiration column');
 select col_type_is('users', 'unconfirmed', 'expire', 'timestamp with time zone', 'expire should be a timestamp.');
 select col_has_default('users', 'unconfirmed', 'expire', 'expiration needs a default setting.');
+select col_default_is('users', 'unconfirmed', 'expire', $$(now() + '7 days'::interval)$$, 'Needs to expire in seven days.');
+
+-- Testing add users functions
+select has_function('users', 'add', array['text', 'text', 'text', 'text'], 'Needs an add user function.');
+select is_definer('users', 'add', array['text', 'text', 'text', 'text'], 'add should be definer security.');
+select function_returns('users', 'add', array['text', 'text', 'text', 'text'], 'uuid', 'Add needs to return a verification link.');
+
+select web.clear_sessions();
+delete from users.user where name = 'testuser';
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select users.add('session1', 'testuser', 'password', 'tester@test.com');
+select bag_has(
+	$$select active, name, email from users.user where name = 'testuser'$$,
+	$$values (false, 'testuser', 'tester@test.com')$$,
+	'Add should add a user to the database.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'four';  
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select throws_like(
+	$$select users.add('session1', 'four', 'secret', 'four@numbers.org')$$,
+	'%"user_name_check"',
+	'User names need to be five or more characters.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'testuser';  
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+select throws_like(
+	$$select users.add('session1', 'testuser', 'four', 'four@numbers.org')$$,
+	'%"user_password_check"',
+	'User password need to be five or more characters.'
+);
+
+select web.clear_sessions();
+delete from users.user where name = 'testuser';
+select web.set_session_data('session1', '{}', now() + interval '1 day');
+create temp table newuserlink as select users.add('session1', 'testuser', 'password', 'tester@test.com');
+select results_eq(
+	'select add from newuserlink',
+	$$select 
+		users.unconfirmed.link 
+	from 
+		users.unconfirmed,
+		users.user
+	where
+		users.user.id = users.unconfirmed.user_id
+		and users.user.name = 'testuser'$$,
+	'Add user function should create and return a confirmation link.'
+);
+select results_ne(
+	$$select password from users.user where name = 'testuser'$$,
+	$$values ('password')$$,
+	'user password needs to be encrypted'
+);
+select results_eq(
+	$$select expire > now() from users.unconfirmed where link = (select add from newuserlink)$$,
+	'values (true)',
+	'Confirmation expiration must be in the future.'
+);
+select bag_has(
+	$$
+		select
+			users.function.name as fname,
+			users.user.name as uname
+		from 
+			users.function_user_link,
+			users.function,
+			users.user
+		where
+			users.function.id = users.function_user_link.function_id
+			and users.user.id = users.function_user_link.user_id
+			and users.function_user_link.user_obj = 
+				(select users.user.id from users.user 
+					where name = 'testuser')
+	$$,
+	$$
+		values 
+			('users.login', 'anonymous'),
+			('users.logout', 'testuser')
+	$$,
+	'Adding a users means setting up the function access.'
+);
+select bag_has(
+	$$
+		select
+			users.function.name as fname,
+			users.group.name as gname
+		from 
+			users.function_group_link,
+			users.function,
+			users.group
+		where
+			users.function.id = users.function_group_link.function_id
+			and users.group.id = users.function_group_link.group_id
+			and users.function_group_link.user_obj = 
+				(select users.user.id from users.user 
+					where name = 'testuser')
+	$$,
+	$$
+		values 
+			('users.info', 'everyone')
+	$$,
+	'Adding a users means setting up the function access.'
+);
+
+
+
+/*
+-- set password function
+select has_function('users', 'set_password', array['text', 'text', 'text', 'text'], 'Needs an user set password function.');
+select is_definer('users', 'set_password', array['text', 'text', 'text', 'text'], 'logout should have definer security.');
+select function_returns('users', 'set_password', array['text', 'text', 'text', 'text'], 'void', 'logout should not return anything.');
+
+
+
+select plan(105);
+
+-- 
+
+-- Tests for the login function
+
 
 -- group table
 
 
 -- user group link table
-select has_table('users', 'user_group_link', 'There needs to be a table that links users to groups.');
-
-select has_column('users', 'user_group_link', 'group_id', 'Group link needs a group id column.');
-select col_is_fk('users', 'user_group_link', 'group_id', 'Group id needs to link to groups id.');
-
-select has_column('users', 'user_group_link', 'owner', 'Needs tell if user is the owner of the group.');
-select col_type_is('users', 'user_group_link', 'owner', 'boolean', 'Group owner needs to be boolean.');
-select col_has_default('users', 'user_group_link', 'owner', 'Group ownder needs a default value.');
-
-select has_column('users', 'user_group_link', 'user_id', 'Group link needs a user id column.');
-select col_is_fk('users', 'user_group_link', 'user_id', 'User id needs to link to user id.');
-
-select throws_like(
-	$$insert into users.user_group_link (group_id, owner, user_id) values
-		((select id from users.group where name = 'admin'),
-		true,
-		(select id from users.user where name = 'admin'))$$,
-	'%violates unique constraint%',
-	'Allow group link to only have one user per group'
-);
-
--- Make sure the admin, everyone, and authenticated groups are created.
-select results_eq(
-	$$select name from users.group$$,
-	$$values ('admin'), ('everyone'), ('authenticated')$$,
-	'There must be the initial three groups'
-);
 
 -- Make sure that the admin group belongs to and is owned by the admin user.  
 select results_eq(
@@ -496,57 +540,6 @@ select results_eq(
 	'Make sure admin owns and is part of the admin group'
 );
 
--- Testing add users functions
-select has_function('users', 'add', array['text', 'text', 'text'], 'Needs an add user function.');
-select is_definer('users', 'add', array['text', 'text', 'text'], 'add should be definer security.');
-select function_returns('users', 'add', array['text', 'text', 'text'], 'uuid', 'Add needs to return a verification link.');
-
--- add user function should store information into the users table.
-delete from users.user where name = 'flintstone';  
-create temp table newuserlink as select users.add('flintstone', 'secret', 'flintstone@bedrock.com');
-select results_eq(
-	$$select active from users.user where name = 'flintstone'$$,
-	'values (false)',
-	'users.add should make an inactive user.'
-);
-select results_eq(
-	$$select name from users.user where name = 'flintstone'$$,
-	$$values ('flintstone')$$,
-	'users.add should add to the database'
-);
-select results_ne(
-	$$select password from users.user where name = 'flintstone'$$,
-	$$values (null)$$,
-	'user password should not be null'
-);
-select results_ne(
-	$$select password from users.user where name = 'flintstone'$$,
-	$$values ('secret')$$,
-	'user password needs to be encrypted'
-);
-select results_eq(
-	$$select email from users.user where name = 'flintstone'$$,
-	$$values ('flintstone@bedrock.com')$$,
-	'user email should in the database.'
-);
-select results_eq(
-	$$select user_id from users.unconfirmed where link = (select add from newuserlink)$$,
-	$$select id from users.user where name = 'flintstone'$$,
-	'Need to create an unconfirmed entry for new users.'
-);
-select results_eq(
-	$$select expire > now() from users.unconfirmed where link = (select add from newuserlink)$$,
-	'values (true)',
-	'Confirmation expiration must be in the future.'
-);
-
--- add user function should fail if the username is less that 5 characters.
-delete from users.user where name = 'four';  
-select throws_like(
-	$$select users.add('four', 'secret', 'four@numbers.org')$$,
-	'%"user_name_check"',
-	'There should be an error for short usernames.'
-);
 
 -- testing validate user functions
 select has_function('users', 'validate', array['uuid'], 'Needs an validate user function.');
