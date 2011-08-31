@@ -13,72 +13,72 @@ begin;
 
 \i pgtap.sql
 
-select plan(126);
+select plan(129);
 
 -- schema tests
 select has_schema('users', 'There should be a schema for users.');
-
+--done
 -- user table tests
 select has_table('users', 'user', 'There should be a users table.');
-
+--done
 select has_column('users', 'user', 'id', 'Needs to have a unique user id.');
 select col_type_is('users', 'user', 'id', 'uuid', 'User id needs to ba a UUID.');
 select col_is_pk('users', 'user', 'id', 'The user id is the primary key');
-
+--done
 select has_column('users', 'user', 'active', 'Need a column of user status.');
 select col_type_is('users', 'user', 'active', 'boolean', 'Active user is boolean.');
 select col_not_null('users', 'user', 'active', 'User active column cannot be null.');
 select col_default_is('users', 'user', 'active', 'false', 'Active column should default to false');
-
+--done
 select has_column('users', 'user', 'name', 'Need a column of user names.');
 select col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
 select col_not_null('users', 'user', 'name', 'User name column cannot be null.');
-
+--done
 select has_column('users', 'user', 'password', 'Needs a password column');
 select col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
 select col_not_null('users', 'user', 'password', 'User passwork cannot be null.');
-
+--done
 select has_column('users', 'user', 'email', 'Needs an email column.');
 select col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
 select col_not_null('users', 'user', 'email', 'User email column cannot be null.');
-
+--done
 select has_column('users', 'user', 'icon', 'Needs an icon column.');
 select col_type_is('users', 'user', 'icon', 'text', 'Icon needs to have a text input.');
 select col_is_null('users', 'user', 'icon', 'User icon column can be null.');
-
+--done
 select has_column('users', 'user', 'introduction', 'Needs an introduction column.');
 select col_type_is('users', 'user', 'introduction', 'text', 'Introduction needs to have a text input.');
 select col_is_null('users', 'user', 'introduction', 'User introduction column can be null.');
-
+--done
 select results_eq(
 	$$select * from users.user where name = 'anonymous'$$,
 	$$values (uuid_nil(), true, 'anonymous', '', '', null, null)$$,
 	'There should be an anonymous user with an all zeros id.'
 );
-
+--done
 select results_eq(
 	$$select active, name from users.user where name = 'admin'$$,
 	$$values (true, 'admin')$$,
 	'There should be an admin user.'
 );
-
+--done
 select throws_like(
 	$$insert into users.user (id, name, password, email) 
 	values (uuid_generate_v4(), 'ADMIN', 'admin', '')$$,
 	'%violates unique constraint%',
 	'User names should be unique, and case insensitive'
 );
-
+--done
 -- session table tests
 select has_table('users', 'session', 'There should be a session linking users to sessions.');
-
+--done
 select has_column('users', 'session', 'sess_id', 'sessions needs to have a session id.');
 select col_is_pk('users', 'session', 'sess_id', 'Session ids need to be the primary key.');
 select col_is_fk('users', 'session', 'sess_id', 'Should be foreign key to web.session.');
-
+--done
 select has_column('users', 'session', 'user_id', 'Session needs a user column.');
 select col_is_fk('users', 'session', 'user_id', 'Should be foreign key to user name.');
-
+--done
 select web.clear_sessions();
 select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
 select results_eq(
@@ -86,7 +86,7 @@ select results_eq(
 	$$values ('flintstone', uuid_nil())$$,
 	'New sessions should be assigned to the anonymous user.'
 );
-
+--done
 select web.clear_sessions();
 select web.set_session_data('flintstone', 'fred', now() + interval '1 day');
 select web.set_session_data('rubble', 'barney', now() + interval '1 day');
@@ -102,7 +102,7 @@ select results_eq(
 	'values (0)',
 	'There should have been no user sessions available.'
 );
-
+--done
 -- Testing user info function.  
 select has_function('users', 'info', array['text', 'text'], 'Needs an user info function.');
 select is_definer('users', 'info', array['text', 'text'], 'info should have definer security.');
@@ -125,7 +125,7 @@ select web.set_session_data('session1', '{}', now() + interval '1 day');
 select results_eq(
 	$$select username from users.info('session1')$$,
 	$$values ('anonymous')$$,
-	'The short users.info should return information about the session owner.'	
+	'Without requesting a specific user, user info will return information about the session owner.'	
 );
 
 -- Tests for user login.
@@ -501,6 +501,12 @@ select bag_has(
 	$$,
 	'Adding a users means setting up the function access.'
 );
+
+-- Delete users function tests
+select has_function('users', 'del', array['text', 'text'], 'Needs an delete user function.');
+select is_definer('users', 'del', array['text', 'text'], 'delete should be definer security.');
+select function_returns('users', 'del', array['text', 'text'], 'void', 'delete should return nothing.');
+
 
 
 
