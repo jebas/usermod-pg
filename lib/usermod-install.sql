@@ -162,6 +162,191 @@ returns setof text as $$
 	end;
 $$ language plpgsql;
 
+create or replace function test_users_for_uuid_ossp_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^uuid_'),
+			'{}',
+			'uuid-ossp needs to be installed into public.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_has_anonymous_user()
+returns setof text as $test$
+	begin 
+		return next results_eq(
+			$$select * from users.user where name = 'anonymous'$$,
+			$$values (uuid_nil(), true, 'anonymous', '', '')$$,
+			'There should be an anonymous user with an all zeros id.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_protect_anonymous()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'protect_anonymous',
+			'trigger', 
+			'There needs to be a function to protect anonymous');
+		return next is_definer('users', 'protect_anonymous',
+			'Needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_anonymous_trigger()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'user', 'protect_anonymous',
+			'users', 'protect_anonymous',
+			'Needs a trigger to protect the anonymous user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_anonymous_cant_be_changed()
+returns setof text as $test$
+	begin 
+		return next throws_ok(
+			$$update users.user set password = 'wrong'
+				where name = 'anonymous'$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous user cannot be changed.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_for_pgcrypto_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^crypt'),
+			'{}',
+			'pgcrypto needs to be installed into public.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_add_user_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'add_user', 
+			array['text', 'text', 'text', 'text'], 'text',
+			'There needs to be an add user function.');
+		return next is_definer('users', 'add_user', 
+			array['text', 'text', 'text', 'text'],
+			'Add user should have definer security.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_add_user_inserts_data()
+returns setof text as $test$
+	declare
+		holder		text;
+	begin
+		select add_user into holder from
+			users.add_user('session-1', 'test-user', 'password',
+				'tester@test.com');
+		return next results_eq(
+			$$select active, name, email from users.user 
+				where name = 'test-user'$$,
+			$$values (false, 'test-user', 'tester@test.com')$$,
+			'add_user needs to add the user to users.user.');
+		return next results_ne(
+			$$select password from users.user
+				where name = 'test-user'$$,
+			$$values ('password')$$,
+			'User''s password needs to be encrypted.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_add_user_name_length()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$select users.add_user('session-1', 'four',
+				'password', 'tester@test.com')$$,
+			'23514', 
+			'new row for relation "user" violates check constraint "name_len"',
+			'User name must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_add_user_password_length()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$select users.add_user('session-1', 'test-user',
+				'four', 'tester@test.com')$$,
+			'23514', 
+			'new row for relation "user" violates check constraint "passwd_len"',
+			'User password must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'group',
+			'Needs a table for group names.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_id_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'group', 'id',
+			'The groups table needs an id column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group', 'id', 'uuid',
+			'Group id is uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_id_is_pk()
+returns setof text as $test$
+	begin
+		return next col_is_pk('users', 'group', 'id', 
+			'Group id needs to be the primary key.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_name_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'group', 'name', 
+			'Group needs a name column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_name_is_text()
+returns setof text as $test$
+	begin 
+		return next col_type_is('users', 'group', 'name', 'text',
+			'Group name needs to be text.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_column_name_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'group', 'name',
+			'Group name cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_index_name_exists()
+returns setof text as $$
+	begin 
+		return next has_index('users', 'group', 'groupname', 
+			'lower(name)', 
+			'Users.group.name must have a lowercase index.');
+		return next index_is_unique('users', 'group', 'groupname',
+			'Users.user.email must be unique.');
+	end;
+$$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -224,6 +409,11 @@ returns setof text as $func$
 				alter column name set not null;
 			return next 'Made users.user.name not null.';
 		end if;
+		if failed_test('test_users_function_add_user_name_length') then 
+			alter table users.user
+				add constraint name_len check (length(name) > 4);
+			return next 'Set users.user.name to a minimum of 5 characters.';
+		end if;
 		if failed_test('test_users_table_user_column_password_exists') then
 			alter table users.user 
 				add column password text;
@@ -268,6 +458,123 @@ returns setof text as $func$
 				on users.user (lower(email));
 			return next 'Created users.user.email index.';
 		end if;
+		
+		if failed_test('test_users_has_anonymous_user') then
+			insert into users.user (id, active, name, password, email) 
+				values
+				(uuid_nil(), true, 'anonymous', '','');
+			return next 'Added the anonymous user.';
+		end if;
+		
+		if failed_test('test_users_table_group_exists') then
+			create table users.group();
+			return next 'Created the group table.';
+		end if;
+		if failed_test('test_users_table_group_column_id_exists') then
+			alter table users.group
+				add column id uuid;
+			return next 'Added the group id column.';
+		end if;
+		if failed_test('test_users_table_group_column_id_is_pk') then
+			alter table users.group
+				add primary key (id);
+			return next 'Made the id the primary key to group.';
+		end if;
+		if failed_test('test_users_table_group_column_name_exists') then
+			alter table users.group
+				add column name text;
+			return next 'Added the name column to the group table.';
+		end if;
+		if failed_test('test_users_table_group_column_name_is_text') then
+			alter table users.group
+				alter column name type text;
+			return next 'Set group name to text.';
+		end if;
+		if failed_test('test_users_table_group_column_name_is_not_null') then
+			alter table users.group
+				alter column name set not null;
+			return next 'Group name is set to not null.';
+		end if;
+		
+		if failed_test('test_users_table_group_index_name_exists') then
+			drop index if exists users.groupname;
+			create unique index groupname 
+				on users.group (lower(name));
+			return next 'Created users.group.name index.';
+		end if;
+		
+		drop trigger if exists protect_anonymous on users.user;
+		
+		create or replace function users.protect_anonymous()
+		returns trigger as $$
+			begin
+				if NEW.name = 'anonymous' then 
+					raise 'Anonymous cannot be changed.';
+				end if;
+				return NEW;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.protect_anonymous.';
+		
+		create or replace function users.add_user(
+			sessid		text,
+			username	text,
+			passwd		text,
+			useremail		text)
+		returns text as $$
+			declare
+				new_uid		uuid;
+				name_holder	text;
+			begin
+				if length(passwd) < 5 then
+					raise 'new row for relation "user" violates check constraint "passwd_len"' 
+						using errcode = 'check_violation';
+				end if;
+				loop
+					select public.uuid_generate_v4() into new_uid;
+					select name into name_holder 
+						from users.user
+						where id = new_uid;
+					exit when not found;
+				end loop;
+				insert into users.user (id, name, password, email) 
+					values (new_uid, username, 
+						public.crypt(passwd, 
+							public.gen_salt('bf')), 
+						useremail);
+				return 'fred';
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.add_user.';
+		
+		create trigger protect_anonymous
+			before update
+			on users.user
+			for each row execute procedure users.protect_anonymous();
+		return next 'Created the protect anonymous trigger.';
+		
+		revoke all on function 
+			users.protect_anonymous(),
+			users.add_user(
+				sessid		text,
+				username	text,
+				passwd		text,
+				useremail		text)
+		from public;
+		
+		grant execute on function 
+			users.add_user(
+				sessid		text,
+				username	text,
+				passwd		text,
+				useremail		text)
+		to nodepg;
+		
+		grant usage on schema users to nodepg;
+		
+		return next 'Permissions set.';
 	end;
 $func$ language plpgsql;
 
@@ -278,16 +585,6 @@ $func$ language plpgsql;
 
 /*
 -- Create User table and initial data.
-create table users.user(
-	id				uuid			primary key,
-	active			boolean		not null default false,
-	name			text			not null check (length(name) > 4),
-	password			text			not null,
-	email			text			not null
-);
-
-create unique index username on users.user (lower(name)); 
-
 insert into users.user (id, active, name, password, email) values
 	(uuid_nil(), true, 'anonymous', '', ''),
 	(uuid_generate_v4(), true, 'admin', crypt('admin', gen_salt('bf')), '');
