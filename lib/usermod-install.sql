@@ -280,6 +280,44 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_deleteuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'delete_user',
+			array['text', 'text'], 'void', 
+			'There needs to be a function to delete users');
+		return next is_definer('users', 'delete_user', 
+			array['text', 'text'], 
+			'Delete user needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deleteuser_removes_data()
+returns setof text as $test$
+	begin 
+		perform users.add_user('session-1', 'test-user',
+			'password', 'tester@test.com');
+		perform users.delete_user('session-1', 'test-user');
+		return next is_empty(
+			$$select * from users.user 
+				where name = 'test-user'$$,
+			'Delete user should remove the user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deleteuser_not_case_sensitive()
+returns setof text as $test$
+	begin 
+		perform users.add_user('session-1', 'test-user',
+			'password', 'tester@test.com');
+		perform users.delete_user('session-1', 'TEST-USER');
+		return next is_empty(
+			$$select * from users.user 
+				where name = 'test-user'$$,
+			'Delete user should remove the user.');
+	end;
+$test$ language plpgsql;
+
 create or replace function test_users_table_group_exists()
 returns setof text as $test$
 	begin 
@@ -346,6 +384,66 @@ returns setof text as $$
 			'Users.user.email must be unique.');
 	end;
 $$ language plpgsql;
+
+create or replace function test_users_function_addgroup_exists()
+returns setof text as $$
+	begin
+		return next function_returns('users', 'add_group', 
+			array['text', 'text'], 'void',
+			'There needs to be an add group function.');
+		return next is_definer('users', 'add_group', 
+			array['text', 'text'],
+			'Add group should have definer security.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_function_addgroup_inserts_data()
+returns setof text as $test$
+	begin
+		perform users.add_group('session-1', 'group1');
+		return next results_eq( 
+			$$select name from users.group
+				where name = 'group1'$$,
+			$$values ('group1')$$,
+			'Users add group needs to add data.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deletegroup_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'delete_group',
+			array['text', 'text'], 'void', 
+			'There needs to be a function to delete group.');
+		return next is_definer('users', 'delete_group', 
+			array['text', 'text'], 
+			'Delete group needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deletegroup_removes_data()
+returns setof text as $test$
+	begin 
+		perform users.add_group('session-1', 'group1');
+		perform users.delete_group('session-1', 'group1');
+		return next is_empty(
+			$$select * from users.group
+				where name = 'group1'$$,
+			'Delete user should remove the group.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deletegroup_not_case_sensitive()
+returns setof text as $test$
+	begin 
+		perform users.add_group('session-1', 'group1');
+		perform users.delete_group('session-1', 'GROUP1');
+		return next is_empty(
+			$$select * from users.group
+				where name = 'group1'$$,
+			'Delete user should not be case sensitive.');
+	end;
+$test$ language plpgsql;
 
 create or replace function correct_users()
 returns setof text as $func$
@@ -549,6 +647,53 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.add_user.';
 		
+		create or replace function users.delete_user(
+			sessid		text,
+			username	text)
+		returns void as $$
+			begin
+				delete from users.user 
+					where name = lower(username);
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_user.';
+		
+		create or replace function users.add_group(
+			sessid		text,
+			groupname	text)
+		returns void as $$
+			begin
+				declare 
+					new_gid		uuid;
+					holder_gid	uuid;
+				begin
+					loop 
+						select public.uuid_generate_v4() into new_gid;
+						select id into holder_gid from users.group
+							where id = new_gid;
+						exit when not found;
+					end loop;
+					insert into users.group (id, name) values
+						(new_gid, groupname);
+				end;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.add_group.';
+		
+		create or replace function users.delete_group(
+			sessid		text,
+			groupname	text)
+		returns void as $$
+			begin
+				delete from users.group
+					where name = lower(groupname);
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_group.';
+		
 		create trigger protect_anonymous
 			before update
 			on users.user
@@ -561,7 +706,16 @@ returns setof text as $func$
 				sessid		text,
 				username	text,
 				passwd		text,
-				useremail		text)
+				useremail		text),
+			users.delete_user(
+				sessid		text,
+				username	text),
+			users.add_group(
+				sessid		text,
+				groupname	text),
+			users.delete_group(
+				sessid		text,
+				groupname	text)
 		from public;
 		
 		grant execute on function 
@@ -569,7 +723,16 @@ returns setof text as $func$
 				sessid		text,
 				username	text,
 				passwd		text,
-				useremail		text)
+				useremail		text),
+			users.delete_user(
+				sessid		text,
+				username	text),
+			users.add_group(
+				sessid		text,
+				groupname	text),
+			users.delete_group(
+				sessid		text,
+				groupname	text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
