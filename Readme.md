@@ -19,6 +19,45 @@ releasing the information outside of the database.
 	<tr>
 		<td>Validate User</td>
 	</tr>
+	<tr>
+		<td>Delete User</td>
+		<td>done</td>
+	</tr>
+	<tr>
+		<td>Login</td>
+	</tr>
+	<tr>
+		<td>Logout</td>
+	</tr>
+	<tr>
+		<td>Change User Name</td>
+	</tr>
+	<tr>
+		<td>Change User Password</td>
+	</tr>
+	<tr> 
+		<td>Change User Email</td>
+	</tr>
+	<tr>
+		<td>User name and password retrieval</td>
+	</tr>
+	<tr>
+		<td>Add Group</td>
+		<td>done</td>
+	</tr>
+	<tr>
+		<td>Delete Group</td>
+		<td>done</td>
+	</tr>
+	<tr>
+		<td>Assign Users to Groups</td>
+	</tr>
+	<tr>
+		<td>Assign Groups to Groups</td>
+	</tr>
+	<tr>
+		<td>Control Permissions</td>
+	</tr>
 </table>
 
 * Add User
@@ -50,10 +89,3 @@ biographies, ect.  Those features should be added in a profile module.
 
 ###Development
 * Jasmine-node
-
-## ToDo 
-* Figure out how to test for SQL errors. (Left a place marker for these.)
-* How to use pgTap for installing an upgrading the database.
-* Adding the group functions: create, delete, add user, add owner.
-* Adding a group for admin functions.  
-* Make the admin user part of the admin group.
