@@ -5,6 +5,22 @@ session.  It also links users to a specific session id without
 releasing the information outside of the database.  
 
 ## Feature List
+
+<table>
+	<tr>
+		<th>Feature</th>
+		<th>Database</th>
+		<th>Node</th>
+	</tr>
+	<tr>
+		<td>Add User</td>
+		<td>done</td>
+	</tr>
+	<tr>
+		<td>Validate User</td>
+	</tr>
+</table>
+
 * Add User
 * Validate New User
 * Delete User
