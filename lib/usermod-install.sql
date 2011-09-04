@@ -213,6 +213,16 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_user_anonymous_cant_be_deleted()
+returns setof text as $test$
+	begin 
+		return next throws_ok(
+			$$delete from users.user where name = 'anonymous'$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous user cannot be changed.');
+	end;
+$test$ language plpgsql;
+
 create or replace function test_users_for_pgcrypto_installation()
 returns setof text as $test$
 	begin 
@@ -385,6 +395,78 @@ returns setof text as $$
 	end;
 $$ language plpgsql;
 
+create or replace function test_users_table_group_has_initial_groups()
+returns setof text as $test$
+	begin 
+		return next bag_has(
+			'select name from users.group',
+			$$values ('admin'), ('everyone'), ('authenticated')$$,
+			'The system needs the initial groups.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_protectspecialgroups_exists()
+returns setof text as $$
+	begin
+		return next function_returns('users', 'protect_special_groups', 
+			'trigger',
+			'There needs to be a protect special groups function.');
+		return next is_definer('users', 'protect_special_groups', 
+			'Add group should have definer security.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_user_specialgroups_trigger()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'group', 'protect_special_groups',
+			'users', 'protect_special_groups',
+			'Needs a trigger to protect the special groups.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groups_specialgroups_cannot_change()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$update users.group set id = uuid_nil()
+				where name = 'admin'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+		return next throws_ok(
+			$$update users.group set id = uuid_nil()
+				where name = 'everyone'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+		return next throws_ok(
+			$$update users.group set id = uuid_nil()
+				where name = 'authenticated'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groups_specialgroups_cannot_be_deleted()
+returns setof text as $text$
+	begin
+		return next throws_ok(
+			$$delete from users.group 
+				where name = 'admin'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+		return next throws_ok(
+			$$delete from users.group 
+				where name = 'everyone'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+		return next throws_ok(
+			$$delete from users.group 
+				where name = 'authenticated'$$,
+			'P0001', 'This group cannot be changed',
+			'Cannot change the admin group.');
+	end;
+$text$ language plpgsql;
+
 create or replace function test_users_function_addgroup_exists()
 returns setof text as $$
 	begin
@@ -447,6 +529,8 @@ $test$ language plpgsql;
 
 create or replace function correct_users()
 returns setof text as $func$
+	declare 
+		group_list		text[]:=array['admin', 'everyone', 'authenticated'];
 	begin
 		if failed_test('test_users_schema') then
 			create schema users;
@@ -601,19 +685,58 @@ returns setof text as $func$
 			return next 'Created users.group.name index.';
 		end if;
 		
+		if failed_test('test_users_table_group_has_initial_groups') then
+			for i in 1..array_length(group_list, 1) loop
+				begin 
+					insert into users.group (id, name) values
+						(uuid_generate_v5(uuid_ns_x500(),
+							group_list[i]), group_list[i]);
+				exception when unique_violation then
+					-- skip this entry.
+				end;
+			end loop;
+			return next 'Added the initial groups.';
+		end if;
+		
 		drop trigger if exists protect_anonymous on users.user;
+		drop trigger if exists protect_special_groups on users.group;
 		
 		create or replace function users.protect_anonymous()
 		returns trigger as $$
 			begin
-				if NEW.name = 'anonymous' then 
+				if OLD.name = 'anonymous' then 
 					raise 'Anonymous cannot be changed.';
 				end if;
-				return NEW;
+				if TG_OP = 'UPDATE' then
+					return NEW;
+				end if;
+				if TG_OP = 'DELETE' then
+					return OLD;
+				end if;
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.protect_anonymous.';
+		
+		create or replace function users.protect_special_groups()
+		returns trigger as $$
+			declare
+				group_list		text[]:=
+					array['admin', 'everyone', 'authenticated'];
+			begin
+				if array[OLD.name] <@ group_list then
+					raise 'This group cannot be changed';
+				end if;
+				if TG_OP = 'UPDATE' then
+					return NEW;
+				end if;
+				if TG_OP = 'DELETE' then
+					return OLD;
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.protect_special_groups.';
 		
 		create or replace function users.add_user(
 			sessid		text,
@@ -695,13 +818,20 @@ returns setof text as $func$
 		return next 'Created function users.delete_group.';
 		
 		create trigger protect_anonymous
-			before update
+			before update or delete
 			on users.user
 			for each row execute procedure users.protect_anonymous();
 		return next 'Created the protect anonymous trigger.';
-		
+
+		create trigger protect_special_groups
+			before update or delete
+			on users.group
+			for each row execute procedure users.protect_special_groups();
+		return next 'Created the protect special groups trigger.';
+
 		revoke all on function 
 			users.protect_anonymous(),
+			users.protect_special_groups(),
 			users.add_user(
 				sessid		text,
 				username	text,
@@ -760,19 +890,6 @@ create table users.session(
 	foreign key (user_id) references users.user (id) on delete cascade
 );
 
--- Create Group table with initial data
-create table users.group (
-	id			uuid		primary key,
-	name		text		not null
-);
-
-create unique index groupnames on users.group (lower(name)); 
-
-insert into users.group (id, name) values
-	(uuid_generate_v4(), 'admin'),
-	(uuid_generate_v4(), 'everyone'),
-	(uuid_generate_v4(), 'authenticated');
-	
 -- Create the Group user linking table.
 create table users.group_user_link(
 	group_id		uuid,
@@ -947,47 +1064,6 @@ $$ language plpgsql security definer;
 
 create type userinfo as (username text);
 
-create or replace function users.info(
-	in session_id text, 
-	in get_info_name text)
-returns userinfo
-as $$
-	declare
-		theusername			text;
-		userdata			record;
-	begin
-		perform users.approval(session_id, 'users.info', get_info_name);
-		select 
-			users.user.name as username into userdata
-			from 
-				users.user
-			where
-				users.user.name = get_info_name;
-		return userdata;
-	end;
-$$ language plpgsql security definer;
-
-create or replace function users.info(
-	in session_id text)
-returns userinfo
-as $$
-	declare
-		sessusername	text;
-		userdata		record;
-	begin
-		select 
-			users.user.name into sessusername 
-		from
-			users.user,
-			users.session
-		where
-			users.user.id = users.session.user_id
-			and users.session.sess_id = session_id;
-		select * into userdata from users.info(session_id, sessusername);
-		return userdata;
-	end;
-$$ language plpgsql security definer;
-
 create or replace function users.login(
 	session_id		text,
 	username		text,
@@ -1025,63 +1101,6 @@ as $$
 		perform users.approval(session_id, 'users.logout', 'anonymous');
 		update users.session set user_id = uuid_nil()
 			where sess_id = session_id;
-	end;
-$$ language plpgsql security definer;
-
-create or replace function users.add(
-	session_id text,
-	username text, 
-	passwd text, 
-	user_email text)
-returns uuid
-as $$
-	declare
-		new_uid			uuid;
-		new_link			uuid;
-		holder_uid		uuid;
-	begin
-		if length(passwd) > 4 then
-			loop
-				select uuid_generate_v4() into new_uid;
-				select id into holder_uid from users.user where id = new_uid;
-				exit when not found;
-			end loop;
-			insert into users.user (id, name, password, email) values
-				(new_uid, username, crypt(passwd, gen_salt('bf')), user_email);
-		else
-			raise 'new row for relation "password" violates check constraint "user_password_check"' 
-				using errcode = 'check_violation';
-		end if;
-		loop
-			begin
-				select uuid_generate_v4() into new_link;
-				insert into users.unconfirmed (link, user_id) values
-					(new_link, new_uid);
-				exit;
-			exception when unique_violation then
-				-- do nothing
-			end;
-		end loop;
-		insert into users.function_user_link (function_id, user_obj, user_id) values
-			((select id from users.function where name = 'users.login'),
-				new_uid, uuid_nil()),
-			((select id from users.function where name = 'users.logout'),
-				new_uid, new_uid);
-		insert into users.function_group_link (function_id, user_obj, group_id) values
-			((select id from users.function where name = 'users.info'),
-				new_uid, 
-				(select id from users.group where name = 'everyone'));
-		return new_link;
-	end;
-$$ language plpgsql security definer;
-
-create or replace function users.del(
-	session_id text,
-	username text)
-returns void
-as $$
-	begin
-		return;
 	end;
 $$ language plpgsql security definer;
 
@@ -1162,149 +1181,4 @@ as $$
 				users.session.sess_id = session_id;
 	end;
 $$ language plpgsql security definer;
-
-create or replace function users.startup_users_tests()
-returns setof text
-as $$
-	begin
-		perform web.set_session_data('session1', '{}', now() + interval '1 day');
-	end;
-$$ language plpgsql;
-
-create or replace function users.teardown_users_tests()
-returns setof text
-as $$
-	begin
-		perform web.destroy_session('session1');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_for_user_schema()
-returns setof text
-as $$
-	begin
-		return next has_schema('userss', 'There should be a schema for users.');
-	end;
-$$ language plpgsql;
-
-
-
-create or replace function users.test_for_user_table()
-returns setof text
-as $$
-	begin
-		return next has_table('users', 'user', 'There should be a users table.');
-		
-		return next has_column('users', 'user', 'id', 'Needs to have a unique user id.');
-		return next col_type_is('users', 'user', 'id', 'uuid', 'User id needs to ba a UUID.');
-		return next col_is_pk('users', 'user', 'id', 'The user id is the primary key');
-		
-		return next has_column('users', 'user', 'active', 'Need a column of user status.');
-		return next col_type_is('users', 'user', 'active', 'boolean', 'Active user is boolean.');
-		return next col_not_null('users', 'user', 'active', 'User active column cannot be null.');
-		return next col_default_is('users', 'user', 'active', 'false', 'Active column should default to false');
-		
-		return next has_column('users', 'user', 'name', 'Need a column of user names.');
-		return next col_type_is('users', 'user', 'name', 'text', 'User name needs to be text');
-		return next col_not_null('users', 'user', 'name', 'User name column cannot be null.');
-		
-		return next has_column('users', 'user', 'password', 'Needs a password column');
-		return next col_type_is('users', 'user', 'password', 'text', 'Password needs to have a text input.');
-		return next col_not_null('users', 'user', 'password', 'User passwork cannot be null.');
-		
-		return next has_column('users', 'user', 'email', 'Needs an email column.');
-		return next col_type_is('users', 'user', 'email', 'text', 'Email needs to have a text input.');
-		return next col_not_null('users', 'user', 'email', 'User email column cannot be null.');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_for_anonymous_user()
-returns setof text
-as $$
-	begin
-		prepare anonymous_user as select * from users.user where name = 'anonymous';
-		prepare anonymous_results as values (uuid_nil(), true, 'anonymous', '', '', null, null);
-		return next results_eq(
-			'"anonymous_user"',
-			'"anonymous_results"',
-			'There should be an anonymous user with an all zeros id.'
-		);
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_admin_user_exists()
-returns setof text
-as $$
-	begin 
-		prepare admins_exist as 
-			select 
-				count(*) > 0 as exists
-			from 
-				users.user,
-				users.group,
-				users.group_user_link
-			where 
-				users.user.id = users.group_user_link.user_id
-				and users.group.id = users.group_user_link.group_id
-				and users.group.name = 'admin';
-		return next results_eq(
-			'"admins_exist"',
-			'values (true)',
-			'The system should have at least one admin.');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_unique_lowercase_user_name()
-returns setof text
-as $$
-	begin 
-		prepare add_anonymous as insert into users.user (id, name, password, email)
-			values (uuid_generate_v4(), 'ANONYMOUS', 'password', '');
-		return next throws_like(
-			'"add_anonymous"',
-			'%violates unique constraint%',
-			'User names should be unique, and case insensitive');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_session_table()
-returns setof text
-as $$
-	begin
-		return next has_table('users', 'session', 'There should be a session linking users to sessions.');
-		
-		return next has_column('users', 'session', 'sess_id', 'sessions needs to have a session id.');
-		return next col_is_pk('users', 'session', 'sess_id', 'Session ids need to be the primary key.');
-		return next fk_ok('users', 'session', 'sess_id', 'web', 'session', 'sess_id', 'Users session table is linked to web session.');
-		
-		return next has_column('users', 'session', 'user_id', 'Session needs a user column.');
-		return next fk_ok('users', 'session', 'user_id', 'users', 'user', 'id', 'Users session needs to be linked to the user ids.');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_session_create()
-returns setof text
-as $$
-	begin 
-		prepare anonymous_session_select as select sess_id, user_id from users.session where sess_id = 'session1';
-		prepare anonymous_session_values as values ('session1', uuid_nil());
-		return next results_eq(
-			'"anonymous_session_select"',
-			'"anonymous_session_values"',
-			'New sessions should be assigned to the anonymous user.');
-	end;
-$$ language plpgsql;
-
-create or replace function users.test_session_delete()
-returns setof text
-as $$
-	begin
-		prepare session_counter as select cast(count(*) as int) from users.session where sess_id = 'session1';
-		perform web.destroy_session('session1');
-		return next results_eq(
-			'"session_counter"',
-			'values (0)',
-			'User sessions should delete when web session is destroyed.');
-	end;
-$$ language plpgsql;
 */

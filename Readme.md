@@ -8,7 +8,7 @@ releasing the information outside of the database.
 
 <table>
 	<tr>
-		<th>Feature</th>
+		<th>Features</th>
 		<th>Database</th>
 		<th>Node</th>
 	</tr>
@@ -39,6 +39,15 @@ releasing the information outside of the database.
 		<td>Change User Email</td>
 	</tr>
 	<tr>
+		<td>Admin Changes User Name</td>
+	</tr>
+	<tr>
+		<td>Admin Changes User Password</td>
+	</tr>
+	<tr> 
+		<td>Admin Changes User Email</td>
+	</tr>
+	<tr>
 		<td>User name and password retrieval</td>
 	</tr>
 	<tr>
@@ -48,6 +57,9 @@ releasing the information outside of the database.
 	<tr>
 		<td>Delete Group</td>
 		<td>done</td>
+	</tr>
+	<tr>
+		<td>Change Group Name</td>
 	</tr>
 	<tr>
 		<td>Assign Users to Groups</td>
