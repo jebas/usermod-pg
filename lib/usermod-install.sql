@@ -527,6 +527,86 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_groupuserlink_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'group_user_link',
+			'There needs to be a table that links users to groups.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_groupid_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'group_user_link', 'group_id',
+			'There should be a column for group ids in group user link.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_groupid_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_user_link', 'group_id',
+			'uuid', 'Group user link group id needs to be UUID.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_groupid_has_fk()
+returns setof text as $test$
+	begin 
+		return next fk_ok('users', 'group_user_link', 'group_id',
+			'users', 'group', 'id',
+			'Group users link needs group id to be a foreign key to group.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_userid_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'group_user_link', 'user_id',
+			'There should be a column for user ids in group user link.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_userid_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_user_link', 'user_id',
+			'uuid', 'Group user link user id needs to be UUID.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_userid_has_fk()
+returns setof text as $test$
+	begin 
+		return next fk_ok('users', 'group_user_link', 'user_id',
+			'users', 'user', 'id',
+			'Group users link needs user id to be a foreign key to user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_has_primary_key()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'group_user_link',
+			array['group_id', 'user_id'],
+			'There should be only one group entry per user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_make_sure_theres_an_admin()
+returns setof text as $test$
+	begin
+		return next results_ne(
+			$$select cast(count(*) as int) 
+				from users.group_user_link, users.group
+				where users.group.id = users.group_user_link.group_id
+				and users.group.name = 'admin'$$,
+			$$values (0)$$,
+			'There needs to be at least on admin user.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -696,6 +776,69 @@ returns setof text as $func$
 				end;
 			end loop;
 			return next 'Added the initial groups.';
+		end if;
+		
+		if failed_test('test_users_table_groupuserlink_exists') then 
+			create table users.group_user_link();
+			return next 'Created the group user link table.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_groupid_exists') then
+			alter table users.group_user_link
+				add column group_id uuid;
+			return next 'Added the group id column to group users link.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_groupid_is_uuid') then
+			alter table users.group_user_link
+				alter column group_id type uuid;
+			return next 'Made group user link group id uuid.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_groupid_has_fk') then
+			alter table users.group_user_link
+				add constraint gul_grpid 
+				foreign key (group_id) 
+				references users.group (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Added the group user link group id foriegn key.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_userid_exists') then
+			alter table users.group_user_link
+				add column user_id uuid;
+			return next 'Added the user id column to group users link.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_userid_is_uuid') then
+			alter table users.group_user_link
+				alter column user_id type uuid;
+			return next 'Made group user link user id uuid.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_column_userid_has_fk') then
+			alter table users.group_user_link
+				add constraint gul_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Added the group user link user id foriegn key.';
+		end if;
+		if failed_test('test_users_table_groupuserlink_has_primary_key') then
+			alter table users.group_user_link
+				add primary key (group_id, user_id);
+			return next 'Added primary key for group users link.';
+		end if;
+		
+		if failed_test('test_users_table_groupuserlink_make_sure_theres_an_admin') then
+			insert into users.user (id, active, name, password, email) values
+				(uuid_generate_v5(uuid_ns_x500(), 'admin'), true,
+				'admin', public.crypt('admin', 
+					public.gen_salt('bf')), 'to be assigned');
+			insert into users.group_user_link (group_id, user_id) values
+				((select id from users.group 
+					where name = lower('admin')), 
+				(select id from users.user
+					where name = lower('admin')));
+			return next 'Created an admin user.';
 		end if;
 		
 		drop trigger if exists protect_anonymous on users.user;
@@ -877,11 +1020,6 @@ $func$ language plpgsql;
 
 
 /*
--- Create User table and initial data.
-insert into users.user (id, active, name, password, email) values
-	(uuid_nil(), true, 'anonymous', '', ''),
-	(uuid_generate_v4(), true, 'admin', crypt('admin', gen_salt('bf')), '');
-
 -- Create Session Table with triggers
 create table users.session(
 	sess_id		text		primary key,
@@ -890,25 +1028,6 @@ create table users.session(
 	foreign key (user_id) references users.user (id) on delete cascade
 );
 
--- Create the Group user linking table.
-create table users.group_user_link(
-	group_id		uuid,
-	user_id			uuid,
-	foreign key (group_id) references users.group (id),
-	foreign key (user_id) references users.user (id),
-	primary key(group_id, user_id)
-);
-
-insert into users.group_user_link (group_id, user_id) 
-	select 
-		users.group.id, 
-		users.user.id 
-	from 
-		users.group, 
-		users.user
-	where
-		users.user.name = 'admin';
-	
 insert into users.group_user_link (group_id, user_id) 
 	select 
 		users.group.id, 

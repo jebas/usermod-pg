@@ -68,25 +68,12 @@ releasing the information outside of the database.
 		<td>Assign Groups to Groups</td>
 	</tr>
 	<tr>
+		<td>Allow Users to Accept or Decline Joining a Group</td>
+	</tr>
+	<tr>
 		<td>Control Permissions</td>
 	</tr>
 </table>
-
-* Add User
-* Validate New User
-* Delete User
-* Login
-* Logout
-* Update User Name
-* Update User Password
-* Update Email Address
-* Forgot password
-* Add Group
-* Delete Group
-* Assign User to Group
-* Assign Another Group to a Group
-* Control permissions
-* Set Controls for User Function Permissions
 
 This module does not include features like avatars, descriptions, 
 biographies, ect.  Those features should be added in a profile module.  
