@@ -607,6 +607,40 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_web_table_session_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('web', 'session', 'user_id',
+			'Web sessions needs an attached user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('web', 'session', 'user_id', 'uuid',
+			'Web session user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_default()
+returns setof text as $test$
+	begin 
+		return next col_default_is('web', 'session', 'user_id', 
+			'uuid_nil()', 
+			'The default user for a new session is anonymous.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_is_fk()
+returns setof text as $test$
+	begin 
+		return next fk_ok('web', 'session', 'user_id',
+			'users', 'user', 'id',
+			'Sessions need to be linked to users.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -758,13 +792,6 @@ returns setof text as $func$
 			return next 'Group name is set to not null.';
 		end if;
 		
-		if failed_test('test_users_table_group_index_name_exists') then
-			drop index if exists users.groupname;
-			create unique index groupname 
-				on users.group (lower(name));
-			return next 'Created users.group.name index.';
-		end if;
-		
 		if failed_test('test_users_table_group_has_initial_groups') then
 			for i in 1..array_length(group_list, 1) loop
 				begin 
@@ -839,6 +866,32 @@ returns setof text as $func$
 				(select id from users.user
 					where name = lower('admin')));
 			return next 'Created an admin user.';
+		end if;
+		
+		if failed_test('test_web_table_session_column_userid_exists') then
+			alter table web.session
+				add column user_id uuid default uuid_nil();
+			return next 'Added user ids to web sessions.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_is_uuid') then
+			alter table web.session
+				alter column user_id type uuid;
+			return next 'Set web session user id to uuid.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_default') then
+			alter table web.session
+				alter column user_id set default uuid_nil();
+			return next 'Set the default for the session user id.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_is_fk') then
+			alter table web.session
+				add constraint sess_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Linked the session id to the users.';
 		end if;
 		
 		drop trigger if exists protect_anonymous on users.user;
