@@ -263,6 +263,13 @@ returns setof text as $test$
 				where name = 'test-user'$$,
 			$$values ('password')$$,
 			'User''s password needs to be encrypted.');
+		return next results_eq(
+			$$select cast(users.validate.link as text)
+				from users.validate, users.user
+				where users.user.id = users.validate.user_id
+					and users.user.name = 'test-user'$$,
+			array[holder],
+			'User add must output the validation link');
 	end;
 $test$ language plpgsql;
 
@@ -287,6 +294,97 @@ returns setof text as $test$
 			'23514', 
 			'new row for relation "user" violates check constraint "passwd_len"',
 			'User password must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'validate',
+			'Need a table for unvalidated users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate', 'link',
+			'Needs a validation link column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate', 'link', 'uuid',
+			'The validation link needs to be a uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_is_pk()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'validate', 'link',
+			'Validate needs link to be the primary key.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'validate', 'user_id',
+			'Validate needs a link to the user table.');
+	end; 
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('users', 'validate', 'user_id', 'uuid',
+			'Validation user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'validate', 'user_id',
+			'users', 'user', 'id',
+			'Validate user id needs to link to the user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate', 'expire',
+			'Validate needs an expriration column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_is_timestamp()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate', 'expire',
+			'timestamp with time zone',
+			'Needs to know when the unvalidated user expires.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_cloumn_expire_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'validate', 'expire',
+			'Validate expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'validate', 'expire',
+			$$(now() + '7 days'::interval)$$,
+			'Validate expire needs to be set to the future.');
 	end;
 $test$ language plpgsql;
 
@@ -762,6 +860,65 @@ returns setof text as $func$
 			return next 'Added the anonymous user.';
 		end if;
 		
+		if failed_test('test_users_table_validate_exists') then
+			create table users.validate();
+			return next 'Created the validate table.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_exists') then
+			alter table users.validate
+				add column link uuid;
+			return next 'Added the link column to validation table.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_is_uuid') then
+			alter table users.validate
+				alter column link type uuid;
+			return next 'Made validation link a uuid.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_is_pk') then
+			alter table users.validate
+				add primary key (link);
+			return next 'Added primary key to validate.';
+		end if;
+		if failed_test('test_users_table_validate_column_userid_exists') then
+			alter table users.validate
+				add column user_id uuid;
+			return next 'Added user id to validate table.';
+		end if;
+		if failed_test('test_users_table_validate_column_userid_is_uuid') then
+			alter table users.validate
+				alter column user_id type uuid;
+		end if;
+		if failed_test('test_users_table_validate_column_userid_is_fk') then
+			alter table users.validate
+				add constraint validate_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Added the validate user link user id foriegn key.';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_exists') then
+			alter table users.validate
+				add column expire timestamp with time zone;
+			return next 'Added the expiration timestamp to validate';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_is_timestamp') then
+			alter table users.validate
+				alter column expire type timestamp with time zone;
+			return next 'Made validate''s expire a timestamp.';
+		end if;
+		if failed_test('test_users_table_validate_cloumn_expire_is_not_null') then
+			alter table users.validate
+				alter column expire set not null;
+			return next 'Making validate expire not null';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_has_default') then
+			alter table users.validate
+				alter column expire set default now() + interval '7 days';
+			return next 'Set validate expire to be in the future.';
+		end if;
+		
 		if failed_test('test_users_table_group_exists') then
 			create table users.group();
 			return next 'Created the group table.';
@@ -941,6 +1098,7 @@ returns setof text as $func$
 			useremail		text)
 		returns text as $$
 			declare
+				link_holder	uuid;
 				new_uid		uuid;
 				name_holder	text;
 			begin
@@ -960,7 +1118,12 @@ returns setof text as $func$
 						public.crypt(passwd, 
 							public.gen_salt('bf')), 
 						useremail);
-				return 'fred';
+				select public.uuid_generate_v5(
+					public.uuid_ns_x500(),
+					lower(username)) into link_holder;
+				insert into users.validate (link, user_id) values
+					(link_holder, new_uid);
+				return link_holder;
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1073,14 +1236,6 @@ $func$ language plpgsql;
 
 
 /*
--- Create Session Table with triggers
-create table users.session(
-	sess_id		text		primary key,
-	user_id		uuid,
-	foreign key (sess_id) references web.session (sess_id) on delete cascade,
-	foreign key (user_id) references users.user (id) on delete cascade
-);
-
 insert into users.group_user_link (group_id, user_id) 
 	select 
 		users.group.id, 
@@ -1092,20 +1247,6 @@ insert into users.group_user_link (group_id, user_id)
 		users.user.name = 'anonymous'
 		and users.group.name = 'everyone';
 
-create or replace function users.init_session() 
-returns trigger 
-as $$
-	begin
-		insert into users.session (sess_id, user_id) values (NEW.sess_id, uuid_nil());
-		return null;
-	end;
-$$ language plpgsql security definer;
-
-create trigger init_session 
-	after insert
-	on web.session
-	for each row execute procedure users.init_session();
-	
 create table users.function (
 	id			uuid		primary key,
 	name		text		not null
@@ -1288,21 +1429,6 @@ as $$
 	end;
 $$ language plpgsql security definer;
 
-create table users.user_group_link(
-	group_id	uuid,
-	owner		boolean		default true,
-	user_id		uuid,
-	foreign key (group_id) references users.group (id),
-	foreign key (user_id) references users.user (id),
-	primary key (group_id, user_id)
-);
-
-insert into users.user_group_link (group_id, owner, user_id) values
-	((select id from users.group where name = 'admin'),
-	true,
-	(select id from users.user where name = 'admin'));
-
-	
 create or replace function users.expire_unconfirmed()
 returns trigger
 as $$
