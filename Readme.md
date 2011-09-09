@@ -11,6 +11,7 @@ releasing the information outside of the database.
 		<th>Features</th>
 		<th>Database</th>
 		<th>Node</th>
+		<th>Client</th>
 	</tr>
 	<tr>
 		<td>Add User</td>
@@ -18,6 +19,7 @@ releasing the information outside of the database.
 	</tr>
 	<tr>
 		<td>Validate User</td>
+		<td>done</td>
 	</tr>
 	<tr>
 		<td>Delete User</td>

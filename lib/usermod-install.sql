@@ -237,7 +237,7 @@ create or replace function test_users_function_add_user_exists()
 returns setof text as $test$
 	begin
 		return next function_returns('users', 'add_user', 
-			array['text', 'text', 'text', 'text'], 'text',
+			array['text', 'text', 'text', 'text'], 'uuid',
 			'There needs to be an add user function.');
 		return next is_definer('users', 'add_user', 
 			array['text', 'text', 'text', 'text'],
@@ -277,8 +277,10 @@ create or replace function test_users_function_add_user_name_length()
 returns setof text as $test$
 	begin
 		return next throws_ok(
-			$$select users.add_user('session-1', 'four',
-				'password', 'tester@test.com')$$,
+			--$$select users.add_user('session-1', 'four',
+			--	'password', 'tester@test.com')$$,
+			$$insert into users.user (id, name, password, email) values
+				(uuid_generate_v1(), 'four', 'password', 'email')$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "name_len"',
 			'User name must be a minimum of 5 characters.');
@@ -385,6 +387,89 @@ returns setof text as $test$
 		return next col_default_is('users', 'validate', 'expire',
 			$$(now() + '7 days'::interval)$$,
 			'Validate expire needs to be set to the future.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_is_indexed()
+returns setof text as $test$
+	begin
+		return next has_index('users', 'validate', 'valid_expire',
+			'expire', 'Validate''s expire column needs an index.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validate_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'validate_user',
+			array['text', 'uuid'], 'void',
+			'There needs to be a function that validates new users.');
+		return next is_definer('users', 'validate_user', 
+			array['text', 'uuid'], 
+			'Validate user needs to have security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validate_activates_user()
+returns setof text as $test$
+	declare
+		holder		uuid;
+	begin
+		select add_user into holder from
+			users.add_user('session-1', 'test-user', 'password',
+				'tester@test.com');
+		perform users.validate_user('session-1', holder);
+		return next results_eq(
+			$$select active from users.user 
+				where name = 'test-user'$$,
+			array[true],
+			'Validate user should make the user active.');
+		return next is_empty(
+			$$select * from users.validate, users.user
+				where users.user.id = users.validate.user_id
+				and users.user.name = 'test-user'$$,
+			'Validate needs to delete the validation link.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_removeunvalidated_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'delete_unvalidated',
+			'trigger',
+			'There needs to be a function that removes unvalidated users.');
+		return next is_definer('users', 'delete_unvalidated', 
+			'Remove unvalidated user needs to have security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_trigger_removeunvalidated_exists()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'user', 'delete_unvalidated',
+			'users', 'delete_unvalidated',
+			'There needs to be a remove unvalidated trigger.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
+returns setof text as $test$
+	declare
+		user1link		uuid;
+		user2link		uuid;
+	begin 
+		select add_user into user1link from
+			users.add_user('session-1', 'test-user1', 'password',
+				'tester1@test.com');
+		select add_user into user2link from
+			users.add_user('session-1', 'test-user2', 'password',
+				'tester2@test.com');
+		update users.validate set expire = now() - interval '1 day' 
+			where link = user1link;
+		perform users.validate_user('session-1', user2link);
+		return next is_empty(
+			$$select * from users.user where name = 'test-user1'$$,
+			'Unvalidated users should expire after a time.');
 	end;
 $test$ language plpgsql;
 
@@ -739,6 +824,72 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_login_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'login',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a function to log in.');
+		return next is_definer('users', 'login', 
+			array['text', 'text', 'text'], 
+			'Login needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_changes_session_owner()
+returns setof text as $test$
+	begin
+		perform users.validate_user('session-1', users.add_user(
+			'session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		perform web.set_session_data('users-session-1', '{}',
+			now() + interval '1 day');
+		perform users.login('users-session-1', 'test-user1',
+			'password');
+		return next results_eq(
+			$$select user_id from web.session 
+				where sess_id = 'users-session-1'$$,
+			$$select id from users.user 
+				where name = lower('test-user1')$$,
+			'Login should assign the user to the session.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_username_case_insensitive()
+returns setof text as $test$
+	begin
+		perform users.validate_user('session-1', users.add_user(
+			'session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		perform web.set_session_data('users-session-1', '{}',
+			now() + interval '1 day');
+		perform users.login('users-session-1', 'TEST-USER1',
+			'password');
+		return next results_eq(
+			$$select user_id from web.session 
+				where sess_id = 'users-session-1'$$,
+			$$select id from users.user 
+				where name = lower('TEST-USER1')$$,
+			'Login should assign the user to the session.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_fails_for_incorrect_values()
+returns setof text as $test$
+	begin
+		perform users.validate_user('session-1', users.add_user(
+			'session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		perform web.set_session_data('users-session-1', '{}',
+			now() + interval '1 day');
+		return next throws_ok(
+			$$select users.login('users-session-1', 'test-user1',
+				'wrong')$$, 
+			'P0001', 'Incorrect user name or password.',
+			'Login needs to throw an error on failure.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -919,6 +1070,11 @@ returns setof text as $func$
 			return next 'Set validate expire to be in the future.';
 		end if;
 		
+		if failed_test('test_users_table_validate_column_expire_is_indexed') then
+			create index valid_expire on users.validate (expire);
+			return next 'Created the validation expiration index.';
+		end if;
+		
 		if failed_test('test_users_table_group_exists') then
 			create table users.group();
 			return next 'Created the group table.';
@@ -1052,6 +1208,7 @@ returns setof text as $func$
 		end if;
 		
 		drop trigger if exists protect_anonymous on users.user;
+		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists protect_special_groups on users.group;
 		
 		create or replace function users.protect_anonymous()
@@ -1090,13 +1247,25 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.protect_special_groups.';
-		
+
+		create or replace function users.delete_unvalidated()
+		returns trigger as $$
+			begin
+				delete from users.user 
+					where id = (select user_id from users.validate
+						where expire < now());
+				return null;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_unvalidated.';
+
 		create or replace function users.add_user(
 			sessid		text,
 			username	text,
 			passwd		text,
 			useremail		text)
-		returns text as $$
+		returns uuid as $$
 			declare
 				link_holder	uuid;
 				new_uid		uuid;
@@ -1128,6 +1297,22 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.add_user.';
+		
+		create or replace function users.validate_user(
+			sessid		text,
+			linkcode		uuid)
+		returns void as $$
+			begin
+				update users.user set active = true 
+					where id = (select user_id 
+						from users.validate 
+						where link = linkcode);
+				delete from users.validate
+					where link = linkcode;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.validate_user.';
 		
 		create or replace function users.delete_user(
 			sessid		text,
@@ -1176,11 +1361,42 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.delete_group.';
 		
+		create or replace function users.login(
+			sessid		text,
+			username	text,
+			passwd		text)
+		returns void as $$
+			declare
+				userid		uuid;
+			begin
+				select id into userid
+					from users.user
+					where name = lower(username)
+						and password = public.crypt(passwd,
+							password);
+				if found then
+					update web.session
+						set user_id = userid
+						where sess_id = sessid;
+				else
+					raise 'Incorrect user name or password.';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.login.';
+		
 		create trigger protect_anonymous
 			before update or delete
 			on users.user
 			for each row execute procedure users.protect_anonymous();
 		return next 'Created the protect anonymous trigger.';
+
+		create trigger delete_unvalidated
+			after update
+			on users.user
+			execute procedure users.delete_unvalidated();
+		return next 'Created the remove unvalidated trigger.';
 
 		create trigger protect_special_groups
 			before update or delete
@@ -1190,12 +1406,16 @@ returns setof text as $func$
 
 		revoke all on function 
 			users.protect_anonymous(),
+			users.delete_unvalidated(),
 			users.protect_special_groups(),
 			users.add_user(
 				sessid		text,
 				username	text,
 				passwd		text,
 				useremail		text),
+			users.validate_user(
+				sessid		text,
+				linkcode		uuid),
 			users.delete_user(
 				sessid		text,
 				username	text),
@@ -1204,7 +1424,11 @@ returns setof text as $func$
 				groupname	text),
 			users.delete_group(
 				sessid		text,
-				groupname	text)
+				groupname	text),
+			users.login(
+				sessid		text,
+				username	text,
+				passwd		text)
 		from public;
 		
 		grant execute on function 
@@ -1213,6 +1437,9 @@ returns setof text as $func$
 				username	text,
 				passwd		text,
 				useremail		text),
+			users.validate_user(
+				sessid		text,
+				linkcode		uuid),
 			users.delete_user(
 				sessid		text,
 				username	text),
@@ -1221,7 +1448,11 @@ returns setof text as $func$
 				groupname	text),
 			users.delete_group(
 				sessid		text,
-				groupname	text)
+				groupname	text),
+			users.login(
+				sessid		text,
+				username	text,
+				passwd		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
