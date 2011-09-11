@@ -890,6 +890,37 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_logout_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'logout',
+			array['text'], 'void', 
+			'There needs to be a function to log out.');
+		return next is_definer('users', 'logout', 
+			array['text'], 
+			'Logout needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_logout_returns_to_anonymous()
+returns setof text as $test$
+	begin
+		perform users.validate_user('session-1', users.add_user(
+			'session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		perform web.set_session_data('users-session-1', '{}',
+			now() + interval '1 day');
+		perform users.login('users-session-1', 'test-user1',
+				'password');
+		perform users.logout('users-session-1');
+		return next results_eq(
+			$$select web.session.user_id from web.session 
+				where sess_id = 'users-session-1'$$,
+			array[uuid_nil()],
+			'Logout must return the session to anonymous');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -1386,6 +1417,18 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.login.';
 		
+		create or replace function users.logout(
+			sessid		text)
+		returns void as $$
+			begin
+				update web.session
+					set user_id = public.uuid_nil()
+					where sess_id = sessid;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.logout.';
+		
 		create trigger protect_anonymous
 			before update or delete
 			on users.user
@@ -1428,7 +1471,9 @@ returns setof text as $func$
 			users.login(
 				sessid		text,
 				username	text,
-				passwd		text)
+				passwd		text),
+			users.logout(
+				sessid		text)
 		from public;
 		
 		grant execute on function 
@@ -1452,7 +1497,9 @@ returns setof text as $func$
 			users.login(
 				sessid		text,
 				username	text,
-				passwd		text)
+				passwd		text),
+			users.logout(
+				sessid		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
