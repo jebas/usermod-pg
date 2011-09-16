@@ -1,3 +1,4 @@
+-- This setup needs to run after webs setup.
 create or replace function test_users_schema()
 returns setof text as $$
 	begin 
@@ -251,7 +252,7 @@ returns setof text as $test$
 		holder		text;
 	begin
 		select add_user into holder from
-			users.add_user('session-1', 'test-user', 'password',
+			users.add_user('web-session-1', 'test-user', 'password',
 				'tester@test.com');
 		return next results_eq(
 			$$select active, name, email from users.user 
@@ -277,8 +278,6 @@ create or replace function test_users_function_add_user_name_length()
 returns setof text as $test$
 	begin
 		return next throws_ok(
-			--$$select users.add_user('session-1', 'four',
-			--	'password', 'tester@test.com')$$,
 			$$insert into users.user (id, name, password, email) values
 				(uuid_generate_v1(), 'four', 'password', 'email')$$,
 			'23514', 
@@ -291,7 +290,7 @@ create or replace function test_users_function_add_user_password_length()
 returns setof text as $test$
 	begin
 		return next throws_ok(
-			$$select users.add_user('session-1', 'test-user',
+			$$select users.add_user('web-session-1', 'test-user',
 				'four', 'tester@test.com')$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "passwd_len"',
@@ -416,9 +415,9 @@ returns setof text as $test$
 		holder		uuid;
 	begin
 		select add_user into holder from
-			users.add_user('session-1', 'test-user', 'password',
+			users.add_user('web-session-1', 'test-user', 'password',
 				'tester@test.com');
-		perform users.validate_user('session-1', holder);
+		perform users.validate_user('web-session-1', holder);
 		return next results_eq(
 			$$select active from users.user 
 				where name = 'test-user'$$,
@@ -459,14 +458,14 @@ returns setof text as $test$
 		user2link		uuid;
 	begin 
 		select add_user into user1link from
-			users.add_user('session-1', 'test-user1', 'password',
+			users.add_user('web-session-1', 'test-user1', 'password',
 				'tester1@test.com');
 		select add_user into user2link from
-			users.add_user('session-1', 'test-user2', 'password',
+			users.add_user('web-session-1', 'test-user2', 'password',
 				'tester2@test.com');
 		update users.validate set expire = now() - interval '1 day' 
 			where link = user1link;
-		perform users.validate_user('session-1', user2link);
+		perform users.validate_user('web-session-1', user2link);
 		return next is_empty(
 			$$select * from users.user where name = 'test-user1'$$,
 			'Unvalidated users should expire after a time.');
@@ -488,9 +487,9 @@ $test$ language plpgsql;
 create or replace function test_users_function_deleteuser_removes_data()
 returns setof text as $test$
 	begin 
-		perform users.add_user('session-1', 'test-user',
+		perform users.add_user('web-session-1', 'test-user',
 			'password', 'tester@test.com');
-		perform users.delete_user('session-1', 'test-user');
+		perform users.delete_user('web-session-1', 'test-user');
 		return next is_empty(
 			$$select * from users.user 
 				where name = 'test-user'$$,
@@ -501,9 +500,9 @@ $test$ language plpgsql;
 create or replace function test_users_function_deleteuser_not_case_sensitive()
 returns setof text as $test$
 	begin 
-		perform users.add_user('session-1', 'test-user',
+		perform users.add_user('web-session-1', 'test-user',
 			'password', 'tester@test.com');
-		perform users.delete_user('session-1', 'TEST-USER');
+		perform users.delete_user('web-session-1', 'TEST-USER');
 		return next is_empty(
 			$$select * from users.user 
 				where name = 'test-user'$$,
@@ -665,7 +664,7 @@ $$ language plpgsql;
 create or replace function test_users_function_addgroup_inserts_data()
 returns setof text as $test$
 	begin
-		perform users.add_group('session-1', 'group1');
+		perform users.add_group('web-session-1', 'group1');
 		return next results_eq( 
 			$$select name from users.group
 				where name = 'group1'$$,
@@ -689,8 +688,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_removes_data()
 returns setof text as $test$
 	begin 
-		perform users.add_group('session-1', 'group1');
-		perform users.delete_group('session-1', 'group1');
+		perform users.add_group('web-session-1', 'group1');
+		perform users.delete_group('web-session-1', 'group1');
 		return next is_empty(
 			$$select * from users.group
 				where name = 'group1'$$,
@@ -701,8 +700,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_not_case_sensitive()
 returns setof text as $test$
 	begin 
-		perform users.add_group('session-1', 'group1');
-		perform users.delete_group('session-1', 'GROUP1');
+		perform users.add_group('web-session-1', 'group1');
+		perform users.delete_group('web-session-1', 'GROUP1');
 		return next is_empty(
 			$$select * from users.group
 				where name = 'group1'$$,
@@ -790,6 +789,81 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_protect_group_link_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'protect_group_link',
+			'trigger', 
+			'There needs to be a function to protect group user links.');
+		return next is_definer('users', 'protect_group_link', 
+			'Delete group needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_trigger_protect_group_link_exists()
+returns setof text as $test$
+	begin 
+		return next trigger_is(
+			'users', 'group_user_link', 'protect_group_link',
+			'users', 'protect_group_link',
+			'Needs a trigger to protect the group users link table.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_protect_group_link_from_anonymous()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$insert into users.group_user_link (group_id, user_id) 
+				select users.group.id, users.user.id 
+				from users.user, users.group 
+				where users.user.name = 'anonymous'
+					and users.group.name = 'admin'$$,
+			'P0001', 'Anonymous cannot be assigned to this group.',
+			'Anonymous cannot be an administrator.');
+		return next throws_ok(
+			$$insert into users.group_user_link (group_id, user_id) 
+				select users.group.id, users.user.id 
+				from users.user, users.group 
+				where users.user.name = 'anonymous'
+					and users.group.name = 'authenticated'$$,
+			'P0001', 'Anonymous cannot be assigned to this group.',
+			'Anonymous is always the logged out user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_protect_group_link_update_anonymous()
+returns setof text as $test$
+	begin
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		insert into users.group_user_link (group_id, user_id) 
+			select users.group.id, users.user.id 
+			from users.user, users.group
+			where users.user.name = 'test-user1'
+			and users.group.name = 'admin';
+		return next throws_ok(
+			$$update users.group_user_link 
+				set user_id = public.uuid_nil()
+				where user_id = (select id from users.user
+					where name = 'test-user1')
+				and group_id = (select id from users.group
+					where name = 'admin')$$,
+			'P0001', 'Anonymous cannot be assigned to this group.',
+			'Anonymous cannot be an administrator.');
+		return next throws_ok(
+			$$update users.group_user_link 
+				set user_id = public.uuid_nil()
+				where user_id = (select id from users.user
+					where name = 'test-user1')
+				and group_id = (select id from users.group
+					where name = 'authenticated')$$,
+			'P0001', 'Anonymous cannot be assigned to this group.',
+			'Anonymous is always the logged out user.');
+	end;
+$test$ language plpgsql;
+
 create or replace function test_web_table_session_column_userid_exists()
 returns setof text as $test$
 	begin
@@ -839,8 +913,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_changes_session_owner()
 returns setof text as $test$
 	begin
-		perform users.validate_user('session-1', users.add_user(
-			'session-1', 'test-user1', 'password', 
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
 			'test-user1@testers.com'));
 		perform web.set_session_data('users-session-1', '{}',
 			now() + interval '1 day');
@@ -858,8 +932,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_username_case_insensitive()
 returns setof text as $test$
 	begin
-		perform users.validate_user('session-1', users.add_user(
-			'session-1', 'test-user1', 'password', 
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
 			'test-user1@testers.com'));
 		perform web.set_session_data('users-session-1', '{}',
 			now() + interval '1 day');
@@ -877,8 +951,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_fails_for_incorrect_values()
 returns setof text as $test$
 	begin
-		perform users.validate_user('session-1', users.add_user(
-			'session-1', 'test-user1', 'password', 
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
 			'test-user1@testers.com'));
 		perform web.set_session_data('users-session-1', '{}',
 			now() + interval '1 day');
@@ -887,6 +961,22 @@ returns setof text as $test$
 				'wrong')$$, 
 			'P0001', 'Incorrect user name or password.',
 			'Login needs to throw an error on failure.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_username_only_active()
+returns setof text as $test$
+	begin
+		perform users.add_user(
+			'web-session-1', 'test-user1', 'password', 
+			'test-user1@testers.com');
+		perform web.set_session_data('users-session-1', '{}',
+			now() + interval '1 day');
+		return next throws_ok(
+			$$select users.login('users-session-1', 'test-user1',
+				'password')$$, 
+			'P0001', 'Incorrect user name or password.',
+			'Login needs to throw an error for inactive users.');
 	end;
 $test$ language plpgsql;
 
@@ -905,8 +995,8 @@ $test$ language plpgsql;
 create or replace function test_users_function_logout_returns_to_anonymous()
 returns setof text as $test$
 	begin
-		perform users.validate_user('session-1', users.add_user(
-			'session-1', 'test-user1', 'password', 
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
 			'test-user1@testers.com'));
 		perform web.set_session_data('users-session-1', '{}',
 			now() + interval '1 day');
@@ -918,6 +1008,59 @@ returns setof text as $test$
 				where sess_id = 'users-session-1'$$,
 			array[uuid_nil()],
 			'Logout must return the session to anonymous');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_updatespecialgroups_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'update_special_groups',
+			'trigger', 
+			'There needs to be a function to update special groups.');
+		return next is_definer('users', 'update_special_groups', 
+			'Update special groups needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_updatespecialgroups_trigger()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'user', 'update_special_groups',
+			'users', 'update_special_groups',
+			'Needs a trigger to update special groups.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_updatespecialgroups_adds_user_to_groups()
+returns setof text as $test$
+	begin
+		perform users.validate_user('web-session-1', users.add_user(
+			'web-session-1', 'test-user1', 'password', 
+			'test-user1@testers.com'));
+		return next bag_has(
+			$$select users.user.name 
+				from users.user, users.group, users.group_user_link
+				where users.user.id = users.group_user_link.user_id
+					and users.group.id = users.group_user_link.group_id
+					and users.group.name = 'authenticated'$$,
+			$$values ('test-user1')$$,
+			'New users need to be added to the authenticated group.');
+		return next bag_has(
+			$$select users.user.name 
+				from users.user, users.group, users.group_user_link
+				where users.user.id = users.group_user_link.user_id
+					and users.group.id = users.group_user_link.group_id
+					and users.group.name = 'everyone'$$,
+			$$values ('test-user1'), ('anonymous')$$,
+			'New users need to be added to the everyone group.');
+		return next bag_hasnt(
+			$$select users.user.name 
+				from users.user, users.group, users.group_user_link
+				where users.user.id = users.group_user_link.user_id
+					and users.group.id = users.group_user_link.group_id
+					and users.group.name = 'authenticated'$$,
+			$$values ('anonymous')$$,
+			'Anonymous cannot be part of the authenticated group.');
 	end;
 $test$ language plpgsql;
 
@@ -1136,6 +1279,11 @@ returns setof text as $func$
 			return next 'Group name is set to not null.';
 		end if;
 		
+		if failed_test('test_users_table_group_index_name_exists') then 
+			create unique index groupname on users.group (lower(name));
+			return next 'Created the group name index.';
+		end if;
+		
 		if failed_test('test_users_table_group_has_initial_groups') then
 			for i in 1..array_length(group_list, 1) loop
 				begin 
@@ -1240,7 +1388,9 @@ returns setof text as $func$
 		
 		drop trigger if exists protect_anonymous on users.user;
 		drop trigger if exists delete_unvalidated on users.user;
+		drop trigger if exists update_special_groups on users.user;
 		drop trigger if exists protect_special_groups on users.group;
+		drop trigger if exists protect_group_link on users.group_user_link;
 		
 		create or replace function users.protect_anonymous()
 		returns trigger as $$
@@ -1278,6 +1428,77 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.protect_special_groups.';
+		
+		create or replace function users.protect_group_link()
+		returns trigger as $$
+			declare
+				gname		text;
+			begin 
+				if NEW.user_id = public.uuid_nil() then
+					select name into gname
+						from users.group
+						where id = NEW.group_id
+						and ( name = 'admin'
+						or name = 'authenticated');
+					if found then
+						raise 'Anonymous cannot be assigned to this group.';
+					end if;
+				end if;
+				return NEW;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.protect_group_link.';
+
+		create or replace function users.update_special_groups()
+		returns trigger as $$
+			begin
+				insert into users.group_user_link (user_id, group_id)
+					select
+						users.user.id as user_id,
+						users.group.id as group_id
+					from 
+						users.user left join 
+							(select 
+								users.group_user_link.user_id as user_id,
+								users.group.name as grpname
+							from 
+								users.group,
+								users.group_user_link
+							where 
+								users.group.id = users.group_user_link.group_id
+								and users.group.name = 'everyone') as grouping
+							on users.user.id = grouping.user_id,
+						users.group
+					where 
+						grouping.grpname is null
+						and users.group.name = 'everyone';
+				insert into users.group_user_link (user_id, group_id)
+					select
+						users.user.id as user_id,
+						users.group.id as group_id
+					from 
+						users.user left join 
+							(select 
+								users.group_user_link.user_id as user_id,
+								users.group.name as grpname
+							from 
+								users.group,
+								users.group_user_link
+							where 
+								users.group.id = users.group_user_link.group_id
+								and users.group.name = 'authenticated') as grouping
+							on users.user.id = grouping.user_id,
+						users.group
+					where 
+						grouping.grpname is null
+						and users.user.name != 'anonymous'
+						and users.group.name = 'authenticated';
+				return null;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.update_special_groups.';
 
 		create or replace function users.delete_unvalidated()
 		returns trigger as $$
@@ -1403,6 +1624,7 @@ returns setof text as $func$
 				select id into userid
 					from users.user
 					where name = lower(username)
+						and active = true
 						and password = public.crypt(passwd,
 							password);
 				if found then
@@ -1441,16 +1663,30 @@ returns setof text as $func$
 			execute procedure users.delete_unvalidated();
 		return next 'Created the remove unvalidated trigger.';
 
+		create trigger update_special_groups
+			after update
+			on users.user
+			execute procedure users.update_special_groups();
+		return next 'Created the update special groups trigger.';
+
 		create trigger protect_special_groups
 			before update or delete
 			on users.group
 			for each row execute procedure users.protect_special_groups();
 		return next 'Created the protect special groups trigger.';
 
+		create trigger protect_group_link
+			before insert or update
+			on users.group_user_link
+			for each row execute procedure users.protect_group_link();
+		return next 'Created the protect special group link trigger.';
+
 		revoke all on function 
 			users.protect_anonymous(),
 			users.delete_unvalidated(),
 			users.protect_special_groups(),
+			users.update_special_groups(),
+			users.protect_group_link(),
 			users.add_user(
 				sessid		text,
 				username	text,
@@ -1514,17 +1750,6 @@ $func$ language plpgsql;
 
 
 /*
-insert into users.group_user_link (group_id, user_id) 
-	select 
-		users.group.id, 
-		users.user.id 
-	from 
-		users.group, 
-		users.user
-	where
-		users.user.name = 'anonymous'
-		and users.group.name = 'everyone';
-
 create table users.function (
 	id			uuid		primary key,
 	name		text		not null
@@ -1607,13 +1832,6 @@ insert into users.function_group_link (function_id, user_obj, group_id)
 			or users.user.name = 'admin')
 		and users.group.name = 'everyone';
 
-create table users.unconfirmed(
-	link			uuid		primary key,
-	user_id		uuid,
-	expire		timestamp with time zone	default now() + interval '7 days',
-	foreign key (user_id) references users.user (id) on delete cascade
-);
-
 create or replace function users.approval(
 	session_id		text,
 	function_name	text,
@@ -1655,45 +1873,6 @@ $$ language plpgsql security definer;
 
 create type userinfo as (username text);
 
-create or replace function users.login(
-	session_id		text,
-	username		text,
-	passwd			text)
-returns void
-as $$
-	declare
-		newuserid	uuid;
-	begin
-		perform users.approval(session_id, 'users.login', username);
-		select
-			id into newuserid
-			from
-				users.user
-			where
-				name = lower(username)
-				and password = crypt(passwd, password);
-		if found then
-			update 
-				users.session
-				set
-					user_id = newuserid
-				where
-					sess_id = session_id;
-		else
-			raise 'Invalid username or password';
-		end if;
-	end;
-$$ language plpgsql security definer;
-
-create or replace function users.logout(session_id text)
-returns void
-as $$
-	begin
-		perform users.approval(session_id, 'users.logout', 'anonymous');
-		update users.session set user_id = uuid_nil()
-			where sess_id = session_id;
-	end;
-$$ language plpgsql security definer;
 
 create or replace function users.set_password(
 	session_id			text,
@@ -1704,39 +1883,6 @@ returns void
 as $$
 	begin
 		return;
-	end;
-$$ language plpgsql security definer;
-
-create or replace function users.expire_unconfirmed()
-returns trigger
-as $$
-	begin
-		delete from users.user 
-			where id = (select user_id from users.unconfirmed where expire < now());
-		return null;
-	end;
-$$ language plpgsql security definer;
-
-create trigger expire_unconfirmed
-	after insert
-	on web.session
-	execute procedure users.expire_unconfirmed();
-	
-
-create or replace function users.validate(thelink uuid)
-returns boolean
-as $$
-	begin
-		update users.user 
-			set active = true 
-			where id = (select user_id from users.unconfirmed
-				where link = thelink);
-		if found then
-			delete from users.unconfirmed where link = thelink;
-			return true;
-		else
-			return false;
-		end if;
 	end;
 $$ language plpgsql security definer;
 
