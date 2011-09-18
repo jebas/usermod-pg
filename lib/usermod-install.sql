@@ -1064,6 +1064,151 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_groupinvite_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'group_invite',
+			'Needs a group invite table.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_link_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group_invite', 'link',
+			'Group invite needs a link column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_link_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_invite', 'link', 'uuid',
+			'Group invite''s link needs to be uuid');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_link_is_pk()
+returns setof text as $test$
+	begin
+		return next col_is_pk( 'users', 'group_invite', 'link',
+			'Link needs to be the primary key on group_invite.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_groupid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group_invite', 'group_id',
+			'Group invite needs a group id column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_groupid_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_invite', 'group_id', 'uuid',
+			'Group invite group id needs to be uuid');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_groupid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'group_invite', 'group_id',
+			'users', 'group', 'id',
+			'Group invite group id needs to be linked to group');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group_invite', 'user_id',
+			'Group invite needs a user id column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_userid_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_invite', 'user_id', 'uuid',
+			'Group invite user id needs to be uuid');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_userid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'group_invite', 'user_id',
+			'users', 'user', 'id',
+			'Group invite user id needs to be linked to group');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_refused_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group_invite', 'refused',
+			'Group invite needs a refused column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_refused_is_boolean()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_invite', 'refused', 'boolean',
+			'Group invite user id needs to be boolean');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_colume_refused_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'group_invite', 'refused',
+			'false'::boolean,
+			'The group invite refused should default to false.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_expire_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group_invite', 'expire',
+			'Group invite needs a expiration column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_column_expire_is_timestamp()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_invite', 'expire', 
+			'timestamp with time zone',
+			'Group invite user id needs to be boolean');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupinvite_colume_expire_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'group_invite', 'expire',
+			$$(now() + '1 mon'::interval)$$,
+			'The group invite expire should default to one month.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'group_user_add',
+			array['text', 'text', 'text'], 'uuid', 
+			'There needs to be a function to add users to a group.');
+		return next is_definer('users', 'group_user_add', 
+			array['text', 'text', 'text'], 
+			'Logout needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -1386,6 +1531,96 @@ returns setof text as $func$
 			return next 'Linked the session id to the users.';
 		end if;
 		
+		if failed_test('test_users_table_groupinvite_exists') then
+			create table users.group_invite();
+			return next 'Created the group invite table.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_link_exists') then
+			alter table users.group_invite
+				add column link uuid;
+			return next 'Added the group invite link column.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_link_is_uuid') then
+			alter table users.group_invite
+				alter column link type uuid;
+			return next 'Changed group invite link column to uuid.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_link_is_pk') then
+			alter table users.group_invite
+				add primary key (link);
+			return next 'Added the primary key to group_invite';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_groupid_exists') then
+			alter table users.group_invite
+				add column group_id uuid;
+			return next 'Added the group invite groupid column.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_groupid_is_uuid') then
+			alter table users.group_invite
+				alter column group_id type uuid;
+			return next 'Changed group invite group id column to uuid.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_groupid_is_fk') then
+			alter table users.group_invite
+				add constraint invite_grpid 
+				foreign key (group_id) 
+				references users.group (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Linked the group invite group id to the group id.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_userid_exists') then
+			alter table users.group_invite
+				add column user_id uuid;
+			return next 'Added the group invite userid column.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_userid_is_uuid') then
+			alter table users.group_invite
+				alter column user_id type uuid;
+			return next 'Changed group invite user id column to uuid.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_userid_is_fk') then
+			alter table users.group_invite
+				add constraint invite_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Linked the group invite user id to the user id.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_refused_exists') then
+			alter table users.group_invite
+				add column refused boolean;
+			return next 'Added the group invite refused column.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_refused_is_boolean') then
+			alter table users.group_invite
+				alter column refused type boolean;
+			return next 'Changed group invite refused column to boolean.';
+		end if;
+		if failed_test('test_users_table_groupinvite_colume_refused_has_default') then
+			alter table users.group_invite
+				alter column refused set default false;
+			return next 'Set the default for users group invite refused.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_expire_exists') then
+			alter table users.group_invite
+				add column expire timestamp with time zone;
+			return next 'Added the group invite expiration column.';
+		end if;
+		if failed_test('test_users_table_groupinvite_column_expire_is_timestamp') then
+			alter table users.group_invite
+				alter column expire type boolean;
+			return next 'Changed group invite expire column to timestamp.';
+		end if;
+		if failed_test('test_users_table_groupinvite_colume_expire_has_default') then
+			alter table users.group_invite
+				alter column expire set default now() + interval '1 month';
+			return next 'Set the default for group invite expiration.';
+		end if;
+		
 		drop trigger if exists protect_anonymous on users.user;
 		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists update_special_groups on users.user;
@@ -1651,6 +1886,18 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.logout.';
 		
+		create or replace function users.group_user_add(
+			sessid		text,
+			groupname	text,
+			username	text)
+		returns uuid as $$
+			begin
+				return public.uuid_nil();
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.group_user_add.';
+		
 		create trigger protect_anonymous
 			before update or delete
 			on users.user
@@ -1709,7 +1956,11 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
+				sessid		text),
+			users.group_user_add(
+				sessid		text,
+				groupname	text,
+				username	text)
 		from public;
 		
 		grant execute on function 
@@ -1735,7 +1986,11 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
+				sessid		text),
+			users.group_user_add(
+				sessid		text,
+				groupname	text,
+				username	text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
