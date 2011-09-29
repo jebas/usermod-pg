@@ -1,10 +1,150 @@
 -- This setup needs to run after webs setup.
+create or replace function startup_20_users()
+returns setof text as $test$
+	declare
+		nameholder	text;
+		userid		uuid;
+		grpid		uuid;
+	begin
+		delete from users.test_user;
+		loop
+			select md5(random()::text) into nameholder;
+			select id into userid
+				from users.user 
+				where name = lower(nameholder)
+					or email = lower(nameholder);
+			if found then
+				continue;
+			end if;
+			insert into users.test_user (name) 
+				values (nameholder);
+			if (select count(*) > 5 from users.test_user) then
+				insert into users.user (id, name, password, email)
+					values (public.uuid_generate_v1(), nameholder,
+					public.crypt('password', public.gen_salt('bf')),
+					nameholder);
+			end if;
+			if (select count(*) > 10 from users.test_user) then
+				update users.user set active = true 
+					where name = lower(nameholder);
+			end if;
+			exit when (select count(*) > 14 from users.test_user);
+		end loop;
+		delete from users.test_group;
+		loop 
+			select md5(random()::text) into nameholder;
+			select id into grpid
+				from users.group
+				where name = lower(nameholder);
+			if found then
+				continue;
+			end if;
+			insert into users.test_group (name)
+				values (nameholder);
+			if (select count(*) > 5 from users.test_group) then 
+				insert into users.group (id, name) values
+					(public.uuid_generate_v1(), nameholder);
+			end if;
+			exit when (select count(*) > 9 from users.test_group);
+		end loop;
+	exception
+		when invalid_schema_name or  undefined_function or
+			undefined_table or undefined_column then
+			--do nothing
+	end;
+$test$ language plpgsql;
+
+create or replace function setup_20_users()
+returns setof text as $test$
+	begin
+		update web.session 
+			set user_id = 
+				(select 
+					users.group_user_link.user_id 
+				from users.group,
+					users.group_user_link
+				where 
+					users.group.id = users.group_user_link.group_id
+					and users.group.name = 'admin'
+				limit 1)
+			where web.session.sess_id = 'web-session-1';
+	exception
+		when invalid_schema_name or undefined_function or
+			undefined_table or undefined_column then
+			--do nothing
+	end; 
+$test$ language plpgsql;
+
 create or replace function test_users_schema()
 returns setof text as $$
 	begin 
 		return next has_schema('users', 'There should be a users schema.');
 	end;
 $$ language plpgsql;
+
+create or replace function test_users_table_testusers_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'test_user', 
+			'There should be a table to hold test users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_testusers_column_name_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'test_user', 'name',
+			'Needs a user name column in test users.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testuser_column_name_is_text()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'test_user', 'name', 'text',
+			'The test user name needs to be text.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testuser_column_name_is_pk()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'test_user', 'name',
+			'Name should be primary key for test users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_testgroup_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'test_group', 
+			'There should be a table to hold test groups.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_testgroup_column_name_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'test_group', 'name',
+			'Needs a user name column in test users.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testgroup_column_name_is_text()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'test_group', 'name', 'text',
+			'The test group name needs to be text.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testgroup_column_name_is_pk()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'test_group', 'name',
+			'Name should be primary key for test group.');
+	end;
+$test$ language plpgsql;
 
 create or replace function test_users_user_exists()
 returns setof text as $$
@@ -249,26 +389,36 @@ $test$ language plpgsql;
 create or replace function test_users_function_add_user_inserts_data()
 returns setof text as $test$
 	declare
-		holder		text;
+		newusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active is null;
+		user1			text;
+		holder			text;
 	begin
+		open newusercur;
+		fetch from newusercur into user1;
 		select add_user into holder from
-			users.add_user('web-session-1', 'test-user', 'password',
-				'tester@test.com');
+			users.add_user('web-session-1', user1, 'password',
+				user1);
 		return next results_eq(
 			$$select active, name, email from users.user 
-				where name = 'test-user'$$,
-			$$values (false, 'test-user', 'tester@test.com')$$,
+				where name = '$$ || user1 || $$'$$,
+			$$values (false, '$$ || user1 || $$', 
+				'$$ || user1 || $$')$$,
 			'add_user needs to add the user to users.user.');
 		return next results_ne(
 			$$select password from users.user
-				where name = 'test-user'$$,
+				where name = '$$ || user1 || $$'$$,
 			$$values ('password')$$,
 			'User''s password needs to be encrypted.');
 		return next results_eq(
 			$$select cast(users.validate.link as text)
 				from users.validate, users.user
 				where users.user.id = users.validate.user_id
-					and users.user.name = 'test-user'$$,
+					and users.user.name = '$$ || user1 || $$'$$,
 			array[holder],
 			'User add must output the validation link');
 	end;
@@ -279,7 +429,8 @@ returns setof text as $test$
 	begin
 		return next throws_ok(
 			$$insert into users.user (id, name, password, email) values
-				(uuid_generate_v1(), 'four', 'password', 'email')$$,
+				(uuid_generate_v1(), 'four', 'password', 
+				md5(random()::text))$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "name_len"',
 			'User name must be a minimum of 5 characters.');
@@ -288,10 +439,21 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_add_user_password_length()
 returns setof text as $test$
+	declare
+		newusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active is null;
+		user1			text;
 	begin
+		open newusercur;
+		fetch from newusercur into user1;
 		return next throws_ok(
-			$$select users.add_user('web-session-1', 'test-user',
-				'four', 'tester@test.com')$$,
+			$$select users.add_user('web-session-1', 
+				'$$ || user1 || $$',
+				'four', '$$ || user1 || $$')$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "passwd_len"',
 			'User password must be a minimum of 5 characters.');
@@ -412,21 +574,30 @@ $test$ language plpgsql;
 create or replace function test_users_function_validate_activates_user()
 returns setof text as $test$
 	declare
+		newusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active is null;
+		user1		text;
 		holder		uuid;
 	begin
+		open newusercur;
+		fetch from newusercur into user1;
 		select add_user into holder from
-			users.add_user('web-session-1', 'test-user', 'password',
-				'tester@test.com');
+			users.add_user('web-session-1', user1, 'password',
+				user1);
 		perform users.validate_user('web-session-1', holder);
 		return next results_eq(
 			$$select active from users.user 
-				where name = 'test-user'$$,
+				where name = '$$ || user1 || $$'$$,
 			array[true],
 			'Validate user should make the user active.');
 		return next is_empty(
 			$$select * from users.validate, users.user
 				where users.user.id = users.validate.user_id
-				and users.user.name = 'test-user'$$,
+				and users.user.name = '$$ || user1 || $$'$$,
 			'Validate needs to delete the validation link.');
 	end;
 $test$ language plpgsql;
@@ -454,20 +625,37 @@ $test$ language plpgsql;
 create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
 returns setof text as $test$
 	declare
-		user1link		uuid;
-		user2link		uuid;
+		newusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active is null;
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		newuser			text;
+		activeuser		text;
+		newuserlink		uuid;
 	begin 
-		select add_user into user1link from
-			users.add_user('web-session-1', 'test-user1', 'password',
-				'tester1@test.com');
-		select add_user into user2link from
-			users.add_user('web-session-1', 'test-user2', 'password',
-				'tester2@test.com');
+		open newusercur;
+		open activeusercur;
+		fetch from newusercur into newuser;
+		fetch from activeusercur into activeuser;
+		select add_user into newuserlink from
+			users.add_user('web-session-1', newuser, 'password',
+				newuser);
 		update users.validate set expire = now() - interval '1 day' 
-			where link = user1link;
-		perform users.validate_user('web-session-1', user2link);
+			where link = newuserlink;
+		update users.user set password =
+			public.crypt('password', public.gen_salt('bf'))
+			where name = lower(activeuser);
 		return next is_empty(
-			$$select * from users.user where name = 'test-user1'$$,
+			$$select * from users.user where 
+				name = lower('$$ || newuser || $$')$$,
 			'Unvalidated users should expire after a time.');
 	end;
 $test$ language plpgsql;
@@ -486,26 +674,42 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_deleteuser_removes_data()
 returns setof text as $test$
+	declare 
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
 	begin 
-		perform users.add_user('web-session-1', 'test-user',
-			'password', 'tester@test.com');
-		perform users.delete_user('web-session-1', 'test-user');
+		open activeusercur;
+		fetch from activeusercur into activeuser;
+		perform users.delete_user('web-session-1', activeuser);
 		return next is_empty(
 			$$select * from users.user 
-				where name = 'test-user'$$,
+				where name = '$$ || activeuser || $$'$$,
 			'Delete user should remove the user.');
 	end;
 $test$ language plpgsql;
 
 create or replace function test_users_function_deleteuser_not_case_sensitive()
 returns setof text as $test$
+	declare 
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
 	begin 
-		perform users.add_user('web-session-1', 'test-user',
-			'password', 'tester@test.com');
-		perform users.delete_user('web-session-1', 'TEST-USER');
+		open activeusercur;
+		fetch from activeusercur into activeuser;
+		perform users.delete_user('web-session-1', upper(activeuser));
 		return next is_empty(
 			$$select * from users.user 
-				where name = 'test-user'$$,
+				where name = '$$ || activeuser || $$'$$,
 			'Delete user should remove the user.');
 	end;
 $test$ language plpgsql;
@@ -663,12 +867,22 @@ $$ language plpgsql;
 
 create or replace function test_users_function_addgroup_inserts_data()
 returns setof text as $test$
-	begin
-		perform users.add_group('web-session-1', 'group1');
+	declare 
+		newgrpcur		cursor for select users.test_group.name
+							from users.test_group
+							left outer join users.group on 
+								(lower(users.test_group.name) = 
+								users.group.name)
+							where users.group.id is null;
+		newgroup		text;
+	begin 
+		open newgrpcur;
+		fetch from newgrpcur into newgroup;
+		perform users.add_group('web-session-1', newgroup);
 		return next results_eq( 
 			$$select name from users.group
-				where name = 'group1'$$,
-			$$values ('group1')$$,
+				where name = '$$ || newgroup || $$'$$,
+			$$values ('$$ || newgroup || $$')$$,
 			'Users add group needs to add data.');
 	end;
 $test$ language plpgsql;
@@ -687,25 +901,43 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_deletegroup_removes_data()
 returns setof text as $test$
+	declare
+		grpcur		cursor for select users.test_group.name
+							from users.test_group
+							left outer join users.group on 
+								(lower(users.test_group.name) = 
+								users.group.name)
+							where users.group.id is not null;
+		agroup		text;
 	begin 
-		perform users.add_group('web-session-1', 'group1');
-		perform users.delete_group('web-session-1', 'group1');
+		open grpcur;
+		fetch from grpcur into agroup;
+		perform users.delete_group('web-session-1', agroup);
 		return next is_empty(
 			$$select * from users.group
-				where name = 'group1'$$,
+				where name = '$$ || agroup || $$'$$,
 			'Delete user should remove the group.');
 	end;
 $test$ language plpgsql;
 
 create or replace function test_users_function_deletegroup_not_case_sensitive()
 returns setof text as $test$
+	declare
+		grpcur		cursor for select users.test_group.name
+							from users.test_group
+							left outer join users.group on 
+								(lower(users.test_group.name) = 
+								users.group.name)
+							where users.group.id is not null;
+		agroup		text;
 	begin 
-		perform users.add_group('web-session-1', 'group1');
-		perform users.delete_group('web-session-1', 'GROUP1');
+		open grpcur;
+		fetch from grpcur into agroup;
+		perform users.delete_group('web-session-1', upper(agroup));
 		return next is_empty(
 			$$select * from users.group
-				where name = 'group1'$$,
-			'Delete user should not be case sensitive.');
+				where name = '$$ || agroup || $$'$$,
+			'Delete user should remove the group.');
 	end;
 $test$ language plpgsql;
 
@@ -834,20 +1066,27 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_protect_group_link_update_anonymous()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
+	declare
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
 		insert into users.group_user_link (group_id, user_id) 
 			select users.group.id, users.user.id 
 			from users.user, users.group
-			where users.user.name = 'test-user1'
+			where users.user.name = activeuser
 			and users.group.name = 'admin';
 		return next throws_ok(
 			$$update users.group_user_link 
 				set user_id = public.uuid_nil()
 				where user_id = (select id from users.user
-					where name = 'test-user1')
+					where name = '$$ || activeuser || $$')
 				and group_id = (select id from users.group
 					where name = 'admin')$$,
 			'P0001', 'Anonymous cannot be assigned to this group.',
@@ -856,7 +1095,7 @@ returns setof text as $test$
 			$$update users.group_user_link 
 				set user_id = public.uuid_nil()
 				where user_id = (select id from users.user
-					where name = 'test-user1')
+					where name = '$$ || activeuser || $$')
 				and group_id = (select id from users.group
 					where name = 'authenticated')$$,
 			'P0001', 'Anonymous cannot be assigned to this group.',
@@ -912,41 +1151,66 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_login_changes_session_owner()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
-		perform web.set_session_data('users-session-1', '{}',
-			now() + interval '1 day');
-		perform users.login('users-session-1', 'test-user1',
+	declare
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
+		perform users.login('web-session-2', activeuser,
 			'password');
 		return next results_eq(
 			$$select user_id from web.session 
-				where sess_id = 'users-session-1'$$,
+				where sess_id = 'web-session-2'$$,
 			$$select id from users.user 
-				where name = lower('test-user1')$$,
+				where name = lower('$$ || activeuser || $$')$$,
 			'Login should assign the user to the session.');
 	end;
 $test$ language plpgsql;
 
 create or replace function test_users_function_login_username_case_insensitive()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
-		perform web.set_session_data('users-session-1', '{}',
-			now() + interval '1 day');
-		perform users.login('users-session-1', 'TEST-USER1',
+	declare
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
+		perform users.login('web-session-2', upper(activeuser),
 			'password');
 		return next results_eq(
 			$$select user_id from web.session 
-				where sess_id = 'users-session-1'$$,
+				where sess_id = 'web-session-2'$$,
 			$$select id from users.user 
-				where name = lower('TEST-USER1')$$,
+				where name = lower('$$ || activeuser || $$')$$,
 			'Login should assign the user to the session.');
 	end;
 $test$ language plpgsql;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 create or replace function test_users_function_login_fails_for_incorrect_values()
 returns setof text as $test$
@@ -963,6 +1227,17 @@ returns setof text as $test$
 			'Login needs to throw an error on failure.');
 	end;
 $test$ language plpgsql;
+
+
+
+
+
+
+
+
+
+
+
 
 create or replace function test_users_function_login_username_only_active()
 returns setof text as $test$
@@ -1209,6 +1484,13 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_addgroupuser_adds_data()
+returns setof text as $test$
+	begin 
+		--perform users.add_group_user('web-session-1', 
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
@@ -1218,6 +1500,46 @@ returns setof text as $func$
 			create schema users;
 			return next 'Created users schema';
 		end if;
+		
+		if failed_test('test_users_table_testusers_exists') then 
+			create table users.test_user();
+			return next 'Created the test users table.';
+		end if;
+		if failed_test('test_users_table_testusers_column_name_exists') then
+			alter table users.test_user
+				add column name text;
+			return next 'Added the user name column to test users.';
+		end if;
+		if failed_test('test_users_table_testuser_column_name_is_text') then
+			alter table users.test_user
+				alter column name type text;
+			return next 'Altered test user name to text.';
+		end if;  
+		if failed_test('test_users_table_testuser_column_name_is_pk') then
+			alter table users.test_user
+				add primary key (name);
+			return next 'Added the primary key to test users.';
+		end if;  
+		
+		if failed_test('test_users_table_testgroup_exists') then 
+			create table users.test_group();
+			return next 'Created the test group table.';
+		end if;
+		if failed_test('test_users_table_testgroup_column_name_exists') then
+			alter table users.test_group
+				add column name text;
+			return next 'Added the user name column to test group.';
+		end if;
+		if failed_test('test_users_table_testgroup_column_name_is_text') then
+			alter table users.test_group
+				alter column name type text;
+			return next 'Altered test group name to text.';
+		end if;  
+		if failed_test('test_users_table_testgroup_column_name_is_pk') then
+			alter table users.test_group
+				add primary key (name);
+			return next 'Added the primary key to test group.';
+		end if;  
 		
 		if failed_test('test_users_user_exists') then
 			create table users.user();
