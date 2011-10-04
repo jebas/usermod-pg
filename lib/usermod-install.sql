@@ -1197,59 +1197,43 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 create or replace function test_users_function_login_fails_for_incorrect_values()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
-		perform web.set_session_data('users-session-1', '{}',
-			now() + interval '1 day');
+	declare
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
 		return next throws_ok(
-			$$select users.login('users-session-1', 'test-user1',
-				'wrong')$$, 
+			$$select users.login('web-session-2', 
+				'$$ || activeuser || $$', 'wrong')$$, 
 			'P0001', 'Incorrect user name or password.',
 			'Login needs to throw an error on failure.');
 	end;
 $test$ language plpgsql;
 
-
-
-
-
-
-
-
-
-
-
-
 create or replace function test_users_function_login_username_only_active()
 returns setof text as $test$
-	begin
-		perform users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com');
-		perform web.set_session_data('users-session-1', '{}',
-			now() + interval '1 day');
+	declare
+		inactiveusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = false;
+		inactiveuser		text;
+	begin 
+		open inactiveusercur;
+		fetch from inactiveusercur into inactiveuser;
 		return next throws_ok(
-			$$select users.login('users-session-1', 'test-user1',
-				'password')$$, 
+			$$select users.login('web-session-2', 
+				'$$ || inactiveuser || $$', 'password')$$, 
 			'P0001', 'Incorrect user name or password.',
 			'Login needs to throw an error for inactive users.');
 	end;
@@ -1269,18 +1253,11 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_logout_returns_to_anonymous()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
-		perform web.set_session_data('users-session-1', '{}',
-			now() + interval '1 day');
-		perform users.login('users-session-1', 'test-user1',
-				'password');
-		perform users.logout('users-session-1');
+	begin 
+		perform users.logout('web-session-1');
 		return next results_eq(
 			$$select web.session.user_id from web.session 
-				where sess_id = 'users-session-1'$$,
+				where sess_id = 'web-session-1'$$,
 			array[uuid_nil()],
 			'Logout must return the session to anonymous');
 	end;
@@ -1308,17 +1285,24 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_updatespecialgroups_adds_user_to_groups()
 returns setof text as $test$
-	begin
-		perform users.validate_user('web-session-1', users.add_user(
-			'web-session-1', 'test-user1', 'password', 
-			'test-user1@testers.com'));
+	declare
+		activeusercur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active = true;
+		activeuser		text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
 		return next bag_has(
 			$$select users.user.name 
 				from users.user, users.group, users.group_user_link
 				where users.user.id = users.group_user_link.user_id
 					and users.group.id = users.group_user_link.group_id
 					and users.group.name = 'authenticated'$$,
-			$$values ('test-user1')$$,
+			$$values ('$$ || activeuser || $$')$$,
 			'New users need to be added to the authenticated group.');
 		return next bag_has(
 			$$select users.user.name 
@@ -1326,7 +1310,7 @@ returns setof text as $test$
 				where users.user.id = users.group_user_link.user_id
 					and users.group.id = users.group_user_link.group_id
 					and users.group.name = 'everyone'$$,
-			$$values ('test-user1'), ('anonymous')$$,
+			$$values ('$$ || activeuser || $$'), ('anonymous')$$,
 			'New users need to be added to the everyone group.');
 		return next bag_hasnt(
 			$$select users.user.name 
@@ -1486,8 +1470,45 @@ $test$ language plpgsql;
 
 create or replace function test_users_function_addgroupuser_adds_data()
 returns setof text as $test$
+	declare
+		activeusercur	cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = true;
+		grpcur		cursor for select users.test_group.name
+						from users.test_group
+						left outer join users.group on 
+							(lower(users.test_group.name) = 
+							users.group.name)
+						where users.group.id is not null;
+		activeuser	text;
+		agroup		text;
 	begin 
-		--perform users.add_group_user('web-session-1', 
+		open activeusercur;
+		open grpcur;
+		fetch from activeusercur into activeuser;
+		fetch from grpcur into agroup;
+		perform users.group_user_add('web-session-1', agroup,
+			activeuser);
+		return next results_eq(
+			$$select 
+				users.group.name, 
+				users.user.name,
+				users.group_invite.refused
+			from 
+				users.group_invite,
+				users.user,
+				users.group
+			where
+				users.user.id = users.group_invite.user_id
+				and users.group.id = users.group_invite.group_id
+				and users.user.name = '$$ || activeuser || $$'
+				and users.group.name = '$$ || agroup || $$'$$,
+				$$values ('$$ || agroup || $$', 
+					'$$ || activeuser || $$', false)$$,
+				'Add group user needs to add data.');
 	end;
 $test$ language plpgsql;
 
@@ -2213,7 +2234,24 @@ returns setof text as $func$
 			groupname	text,
 			username	text)
 		returns uuid as $$
+			declare 
+				linkholder		uuid;
+				inviteholder	uuid;
 			begin
+				loop
+					linkholder = public.uuid_generate_v4();
+					select link into inviteholder
+						from users.group_invite
+						where link = linkholder;
+					exit when not found;
+				end loop;
+				insert into users.group_invite 
+					(link, group_id, user_id)
+					values 
+					(linkholder, (select id from users.group 
+						where name = groupname), 
+						(select id from users.user 
+						where name = username));
 				return public.uuid_nil();
 			end;
 		$$ language plpgsql security definer
