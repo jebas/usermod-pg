@@ -3,53 +3,55 @@ create or replace function startup_20_users()
 returns setof text as $test$
 	declare
 		nameholder	text;
-		userid		uuid;
-		grpid		uuid;
+		idholder		uuid;
+		foundid		uuid;
 	begin
 		delete from users.test_user;
 		loop
 			select md5(random()::text) into nameholder;
-			select id into userid
-				from users.user 
+			select uuid_generate_v4() into idholder;
+			select id into foundid 
+				from users.user
 				where name = lower(nameholder)
-					or email = lower(nameholder);
+					or email = lower(nameholder)
+					or id = idholder;
 			if found then
 				continue;
 			end if;
+			select id into foundid 
+				from users.group
+				where name = lower(nameholder)
+					or id = idholder;
+			if found then
+				continue;
+			end if;
+			-- Create a list of safe unused user names for testing.  
 			insert into users.test_user (name) 
 				values (nameholder);
 			if (select count(*) > 5 from users.test_user) then
+				-- Create inactive users for testing.  
 				insert into users.user (id, name, password, email)
-					values (public.uuid_generate_v1(), nameholder,
+					values (idholder, nameholder,
 					public.crypt('password', public.gen_salt('bf')),
 					nameholder);
 			end if;
 			if (select count(*) > 10 from users.test_user) then
+				-- Make users active and assign them to a group 
+				-- with an identical name and id.  
 				update users.user set active = true 
-					where name = lower(nameholder);
+					where id = idholder;
+				insert into users.group (id, name) values
+					(idholder, nameholder);
+				insert into users.group_user_link (group_id, user_id)
+					values (idholder, idholder);
 			end if;
 			exit when (select count(*) > 14 from users.test_user);
 		end loop;
-		delete from users.test_group;
-		loop 
-			select md5(random()::text) into nameholder;
-			select id into grpid
-				from users.group
-				where name = lower(nameholder);
-			if found then
-				continue;
-			end if;
-			insert into users.test_group (name)
-				values (nameholder);
-			if (select count(*) > 5 from users.test_group) then 
-				insert into users.group (id, name) values
-					(public.uuid_generate_v1(), nameholder);
-			end if;
-			exit when (select count(*) > 9 from users.test_group);
-		end loop;
 	exception
-		when invalid_schema_name or  undefined_function or
-			undefined_table or undefined_column then
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
 			--do nothing
 	end;
 $test$ language plpgsql;
@@ -69,8 +71,10 @@ returns setof text as $test$
 				limit 1)
 			where web.session.sess_id = 'web-session-1';
 	exception
-		when invalid_schema_name or undefined_function or
-			undefined_table or undefined_column then
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
 			--do nothing
 	end; 
 $test$ language plpgsql;
@@ -111,38 +115,6 @@ returns setof text as $test$
 	begin 
 		return next col_is_pk('users', 'test_user', 'name',
 			'Name should be primary key for test users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_testgroup_exists()
-returns setof text as $test$
-	begin
-		return next has_table('users', 'test_group', 
-			'There should be a table to hold test groups.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_testgroup_column_name_exists()
-returns setof text as $test$
-	begin
-		return next has_column('users', 'test_group', 'name',
-			'Needs a user name column in test users.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testgroup_column_name_is_text()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'test_group', 'name', 'text',
-			'The test group name needs to be text.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testgroup_column_name_is_pk()
-returns setof text as $test$
-	begin 
-		return next col_is_pk('users', 'test_group', 'name',
-			'Name should be primary key for test group.');
 	end;
 $test$ language plpgsql;
 
@@ -868,12 +840,12 @@ $$ language plpgsql;
 create or replace function test_users_function_addgroup_inserts_data()
 returns setof text as $test$
 	declare 
-		newgrpcur		cursor for select users.test_group.name
-							from users.test_group
-							left outer join users.group on 
-								(lower(users.test_group.name) = 
-								users.group.name)
-							where users.group.id is null;
+		newgrpcur		cursor for select users.test_user.name
+							from users.test_user
+							left outer join users.user on 
+								(lower(users.test_user.name) = 
+								users.user.name)
+							where users.user.active is null;
 		newgroup		text;
 	begin 
 		open newgrpcur;
@@ -902,12 +874,12 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_removes_data()
 returns setof text as $test$
 	declare
-		grpcur		cursor for select users.test_group.name
-							from users.test_group
-							left outer join users.group on 
-								(lower(users.test_group.name) = 
-								users.group.name)
-							where users.group.id is not null;
+		grpcur		cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = true;
 		agroup		text;
 	begin 
 		open grpcur;
@@ -923,12 +895,12 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_not_case_sensitive()
 returns setof text as $test$
 	declare
-		grpcur		cursor for select users.test_group.name
-							from users.test_group
-							left outer join users.group on 
-								(lower(users.test_group.name) = 
-								users.group.name)
-							where users.group.id is not null;
+		grpcur		cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = true;
 		agroup		text;
 	begin 
 		open grpcur;
@@ -1456,6 +1428,18 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_groupinvite_has_index()
+returns setof text as $test$
+	begin 
+		return next has_index('users', 'group_invite', 'grpusr_idx',
+			array['group_id', 'user_id'],
+			'index to make sure users are only asked once.');
+		return next index_is_unique('users', 'group_invite', 
+			'grpusr_idx',
+			'Index group user invite needs to be unique.');
+	end;
+$test$ language plpgsql;  
+
 create or replace function test_users_function_addgroupuser_exists()
 returns setof text as $test$
 	begin 
@@ -1477,19 +1461,12 @@ returns setof text as $test$
 							(lower(users.test_user.name) = 
 							users.user.name)
 						where users.user.active = true;
-		grpcur		cursor for select users.test_group.name
-						from users.test_group
-						left outer join users.group on 
-							(lower(users.test_group.name) = 
-							users.group.name)
-						where users.group.id is not null;
 		activeuser	text;
 		agroup		text;
 	begin 
 		open activeusercur;
-		open grpcur;
 		fetch from activeusercur into activeuser;
-		fetch from grpcur into agroup;
+		fetch from activeusercur into agroup;
 		perform users.group_user_add('web-session-1', agroup,
 			activeuser);
 		return next results_eq(
@@ -1509,6 +1486,57 @@ returns setof text as $test$
 				$$values ('$$ || agroup || $$', 
 					'$$ || activeuser || $$', false)$$,
 				'Add group user needs to add data.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_not_of_the_group()
+returns setof text as $test$
+	declare
+		activeusercur	cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = true;
+		activeuser	text;
+	begin 
+		open activeusercur;
+		fetch from activeusercur into activeuser;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+				'$$ || activeuser || $$', '$$ || activeuser || $$')$$,
+			'P0001', 'User already a member.',
+			'Needs to throw an exception when adding an existing group member.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_only_active_users()
+returns setof text as $test$
+	declare 
+		activecur		cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = true;
+		inactivecur	cursor for select users.test_user.name
+						from users.test_user
+						left outer join users.user on 
+							(lower(users.test_user.name) = 
+							users.user.name)
+						where users.user.active = false;
+		agroup		text;
+		inactiveuser	text;
+	begin
+		open activecur;
+		open inactivecur;
+		fetch from activecur into agroup;
+		fetch from inactivecur into inactiveuser;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+				'$$ || agroup || $$', '$$ || inactiveuser || $$')$$,
+			'P0001', 'User is not available.',
+			'Needs to throw an exception when user is inactive.');
 	end;
 $test$ language plpgsql;
 
@@ -1540,26 +1568,6 @@ returns setof text as $func$
 			alter table users.test_user
 				add primary key (name);
 			return next 'Added the primary key to test users.';
-		end if;  
-		
-		if failed_test('test_users_table_testgroup_exists') then 
-			create table users.test_group();
-			return next 'Created the test group table.';
-		end if;
-		if failed_test('test_users_table_testgroup_column_name_exists') then
-			alter table users.test_group
-				add column name text;
-			return next 'Added the user name column to test group.';
-		end if;
-		if failed_test('test_users_table_testgroup_column_name_is_text') then
-			alter table users.test_group
-				alter column name type text;
-			return next 'Altered test group name to text.';
-		end if;  
-		if failed_test('test_users_table_testgroup_column_name_is_pk') then
-			alter table users.test_group
-				add primary key (name);
-			return next 'Added the primary key to test group.';
 		end if;  
 		
 		if failed_test('test_users_user_exists') then
@@ -1964,6 +1972,13 @@ returns setof text as $func$
 			return next 'Set the default for group invite expiration.';
 		end if;
 		
+		if failed_test('test_users_table_groupinvite_has_index') then
+			drop index if exists users.grpusr_idx;
+			create unique index grpusr_idx 
+				on users.group_invite (group_id, user_id);
+			return next 'Created the group user link index.';
+		end if;
+		
 		drop trigger if exists protect_anonymous on users.user;
 		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists update_special_groups on users.user;
@@ -2237,7 +2252,26 @@ returns setof text as $func$
 			declare 
 				linkholder		uuid;
 				inviteholder	uuid;
+				userholder	text;
 			begin
+				select users.user.name into userholder
+					from users.user
+					where name = username
+						and active = true;
+				if not found then
+					raise 'User is not available.';
+				end if;
+				select users.user.name into userholder
+					from users.user,
+						users.group,
+						users.group_user_link
+					where users.user.id = users.group_user_link.user_id
+						and users.group.id = users.group_user_link.group_id
+						and users.group.name = lower(groupname)
+						and users.user.name = lower(username);
+				if found then 
+					raise 'User already a member.';
+				end if;
 				loop
 					linkholder = public.uuid_generate_v4();
 					select link into inviteholder
