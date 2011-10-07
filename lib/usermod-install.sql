@@ -47,6 +47,55 @@ returns setof text as $test$
 			end if;
 			exit when (select count(*) > 14 from users.test_user);
 		end loop;
+		
+		create or replace function active_test_users()
+		returns refcursor as $$
+			declare 
+				refcur	refcursor;
+			begin
+				open refcur for 
+					select users.test_user.name
+					from users.test_user
+					left outer join users.user on 
+						(lower(users.test_user.name) = 
+						users.user.name)
+					where users.user.active = true;
+				return refcur;
+			end;
+		$$ language plpgsql;  
+		
+		create or replace function inactive_test_users()
+		returns refcursor as $$
+			declare 
+				refcur	refcursor;
+			begin
+				open refcur for 
+					select users.test_user.name
+					from users.test_user
+					left outer join users.user on 
+						(lower(users.test_user.name) = 
+						users.user.name)
+					where users.user.active = false;
+				return refcur;
+			end;
+		$$ language plpgsql;  
+
+		create or replace function new_test_users()
+		returns refcursor as $$
+			declare 
+				refcur	refcursor;
+			begin
+				open refcur for 
+					select users.test_user.name
+					from users.test_user
+					left outer join users.user on 
+						(lower(users.test_user.name) = 
+						users.user.name)
+					where users.user.active is null;
+				return refcur;
+			end;
+		$$ language plpgsql;  
+		
 	exception
 		when invalid_schema_name 
 			or undefined_function 
@@ -77,6 +126,21 @@ returns setof text as $test$
 			or undefined_column then
 			--do nothing
 	end; 
+$test$ language plpgsql;
+
+create or replace function shutdown_20_users()
+returns setof text as $test$
+	begin
+		drop function if exists users.new_test_users();
+		drop function if exists users.active_test_users();
+		drop function if exists users.inactive_test_users();
+	exception
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
+			--do nothing
+	end;
 $test$ language plpgsql;
 
 create or replace function test_users_schema()
@@ -361,16 +425,11 @@ $test$ language plpgsql;
 create or replace function test_users_function_add_user_inserts_data()
 returns setof text as $test$
 	declare
-		newusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active is null;
+		newusercur		refcursor;
 		user1			text;
 		holder			text;
 	begin
-		open newusercur;
+		select new_test_users() into newusercur;
 		fetch from newusercur into user1;
 		select add_user into holder from
 			users.add_user('web-session-1', user1, 'password',
@@ -412,15 +471,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_add_user_password_length()
 returns setof text as $test$
 	declare
-		newusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active is null;
+		newusercur		refcursor;
 		user1			text;
 	begin
-		open newusercur;
+		select new_test_users() into newusercur;
 		fetch from newusercur into user1;
 		return next throws_ok(
 			$$select users.add_user('web-session-1', 
@@ -546,16 +600,11 @@ $test$ language plpgsql;
 create or replace function test_users_function_validate_activates_user()
 returns setof text as $test$
 	declare
-		newusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active is null;
+		newusercur	refcursor;
 		user1		text;
 		holder		uuid;
 	begin
-		open newusercur;
+		select new_test_users() into newusercur;
 		fetch from newusercur into user1;
 		select add_user into holder from
 			users.add_user('web-session-1', user1, 'password',
@@ -597,24 +646,14 @@ $test$ language plpgsql;
 create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
 returns setof text as $test$
 	declare
-		newusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active is null;
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		newusercur		refcursor;
+		activeusercur		refcursor;
 		newuser			text;
 		activeuser		text;
 		newuserlink		uuid;
 	begin 
-		open newusercur;
-		open activeusercur;
+		select new_test_users() into newusercur;
+		select active_test_users() into activeusercur;
 		fetch from newusercur into newuser;
 		fetch from activeusercur into activeuser;
 		select add_user into newuserlink from
@@ -647,15 +686,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_deleteuser_removes_data()
 returns setof text as $test$
 	declare 
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		perform users.delete_user('web-session-1', activeuser);
 		return next is_empty(
@@ -668,15 +702,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_deleteuser_not_case_sensitive()
 returns setof text as $test$
 	declare 
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		perform users.delete_user('web-session-1', upper(activeuser));
 		return next is_empty(
@@ -840,15 +869,10 @@ $$ language plpgsql;
 create or replace function test_users_function_addgroup_inserts_data()
 returns setof text as $test$
 	declare 
-		newgrpcur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active is null;
+		newgrpcur		refcursor;
 		newgroup		text;
 	begin 
-		open newgrpcur;
+		select new_test_users() into newgrpcur;
 		fetch from newgrpcur into newgroup;
 		perform users.add_group('web-session-1', newgroup);
 		return next results_eq( 
@@ -874,15 +898,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_removes_data()
 returns setof text as $test$
 	declare
-		grpcur		cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = true;
+		grpcur		refcursor;
 		agroup		text;
 	begin 
-		open grpcur;
+		select active_test_users() into grpcur;
 		fetch from grpcur into agroup;
 		perform users.delete_group('web-session-1', agroup);
 		return next is_empty(
@@ -895,15 +914,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_deletegroup_not_case_sensitive()
 returns setof text as $test$
 	declare
-		grpcur		cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = true;
+		grpcur		refcursor;
 		agroup		text;
 	begin 
-		open grpcur;
+		select active_test_users() into grpcur;
 		fetch from grpcur into agroup;
 		perform users.delete_group('web-session-1', upper(agroup));
 		return next is_empty(
@@ -1039,15 +1053,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_protect_group_link_update_anonymous()
 returns setof text as $test$
 	declare
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		insert into users.group_user_link (group_id, user_id) 
 			select users.group.id, users.user.id 
@@ -1124,15 +1133,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_changes_session_owner()
 returns setof text as $test$
 	declare
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		perform users.login('web-session-2', activeuser,
 			'password');
@@ -1148,15 +1152,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_username_case_insensitive()
 returns setof text as $test$
 	declare
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		perform users.login('web-session-2', upper(activeuser),
 			'password');
@@ -1172,15 +1171,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_fails_for_incorrect_values()
 returns setof text as $test$
 	declare
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		return next throws_ok(
 			$$select users.login('web-session-2', 
@@ -1193,15 +1187,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_username_only_active()
 returns setof text as $test$
 	declare
-		inactiveusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = false;
+		inactiveusercur	refcursor;
 		inactiveuser		text;
 	begin 
-		open inactiveusercur;
+		select inactive_test_users() into inactiveusercur;
 		fetch from inactiveusercur into inactiveuser;
 		return next throws_ok(
 			$$select users.login('web-session-2', 
@@ -1258,15 +1247,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_updatespecialgroups_adds_user_to_groups()
 returns setof text as $test$
 	declare
-		activeusercur		cursor for select users.test_user.name
-							from users.test_user
-							left outer join users.user on 
-								(lower(users.test_user.name) = 
-								users.user.name)
-							where users.user.active = true;
+		activeusercur		refcursor;
 		activeuser		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		return next bag_has(
 			$$select users.user.name 
@@ -1455,16 +1439,11 @@ $test$ language plpgsql;
 create or replace function test_users_function_addgroupuser_adds_data()
 returns setof text as $test$
 	declare
-		activeusercur	cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = true;
+		activeusercur	refcursor;
 		activeuser	text;
 		agroup		text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		fetch from activeusercur into agroup;
 		perform users.group_user_add('web-session-1', agroup,
@@ -1492,15 +1471,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_addgroupuser_not_of_the_group()
 returns setof text as $test$
 	declare
-		activeusercur	cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = true;
+		activeusercur	refcursor;
 		activeuser	text;
 	begin 
-		open activeusercur;
+		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		return next throws_ok(
 			$$select users.group_user_add('web-session-1',
@@ -1513,23 +1487,13 @@ $test$ language plpgsql;
 create or replace function test_users_function_addgroupuser_only_active_users()
 returns setof text as $test$
 	declare 
-		activecur		cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = true;
-		inactivecur	cursor for select users.test_user.name
-						from users.test_user
-						left outer join users.user on 
-							(lower(users.test_user.name) = 
-							users.user.name)
-						where users.user.active = false;
+		activecur		refcursor;
+		inactivecur	refcursor;
 		agroup		text;
 		inactiveuser	text;
 	begin
-		open activecur;
-		open inactivecur;
+		select active_test_users() into activecur;
+		select inactive_test_users() into inactivecur;
 		fetch from activecur into agroup;
 		fetch from inactivecur into inactiveuser;
 		return next throws_ok(
