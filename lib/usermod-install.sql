@@ -47,55 +47,6 @@ returns setof text as $test$
 			end if;
 			exit when (select count(*) > 14 from users.test_user);
 		end loop;
-		
-		create or replace function active_test_users()
-		returns refcursor as $$
-			declare 
-				refcur	refcursor;
-			begin
-				open refcur for 
-					select users.test_user.name
-					from users.test_user
-					left outer join users.user on 
-						(lower(users.test_user.name) = 
-						users.user.name)
-					where users.user.active = true;
-				return refcur;
-			end;
-		$$ language plpgsql;  
-		
-		create or replace function inactive_test_users()
-		returns refcursor as $$
-			declare 
-				refcur	refcursor;
-			begin
-				open refcur for 
-					select users.test_user.name
-					from users.test_user
-					left outer join users.user on 
-						(lower(users.test_user.name) = 
-						users.user.name)
-					where users.user.active = false;
-				return refcur;
-			end;
-		$$ language plpgsql;  
-
-		create or replace function new_test_users()
-		returns refcursor as $$
-			declare 
-				refcur	refcursor;
-			begin
-				open refcur for 
-					select users.test_user.name
-					from users.test_user
-					left outer join users.user on 
-						(lower(users.test_user.name) = 
-						users.user.name)
-					where users.user.active is null;
-				return refcur;
-			end;
-		$$ language plpgsql;  
-		
 	exception
 		when invalid_schema_name 
 			or undefined_function 
@@ -127,22 +78,68 @@ returns setof text as $test$
 			--do nothing
 	end; 
 $test$ language plpgsql;
-
-create or replace function shutdown_20_users()
-returns setof text as $test$
+		
+create or replace function new_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
 	begin
-		drop function if exists users.new_test_users();
-		drop function if exists users.active_test_users();
-		drop function if exists users.inactive_test_users();
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active is null;
+		return refcur;
 	end;
-$test$ language plpgsql;
+$$ language plpgsql;  
 
+create or replace function inactive_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active = false;
+		return refcur;
+	end;
+$$ language plpgsql;  
+
+create or replace function active_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active = true;
+		return refcur;
+	end;
+$$ language plpgsql;  
+
+create or replace function anonymous_sessions()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select sess_id 
+			from web.session
+			where user_id = public.uuid_nil();
+		return refcur;
+	end;
+$$ language plpgsql;
+		
 create or replace function test_users_schema()
 returns setof text as $$
 	begin 
@@ -1134,15 +1131,19 @@ create or replace function test_users_function_login_changes_session_owner()
 returns setof text as $test$
 	declare
 		activeusercur		refcursor;
+		sessioncur		refcursor;
 		activeuser		text;
+		sessionid			text;
 	begin 
 		select active_test_users() into activeusercur;
+		select anonymous_sessions() into sessioncur;
 		fetch from activeusercur into activeuser;
-		perform users.login('web-session-2', activeuser,
+		fetch from sessioncur into sessionid;
+		perform users.login(sessionid, activeuser,
 			'password');
 		return next results_eq(
 			$$select user_id from web.session 
-				where sess_id = 'web-session-2'$$,
+				where sess_id = '$$ || sessionid || $$'$$,
 			$$select id from users.user 
 				where name = lower('$$ || activeuser || $$')$$,
 			'Login should assign the user to the session.');
@@ -1153,15 +1154,19 @@ create or replace function test_users_function_login_username_case_insensitive()
 returns setof text as $test$
 	declare
 		activeusercur		refcursor;
+		sessioncur		refcursor;
 		activeuser		text;
+		sessionid			text;
 	begin 
 		select active_test_users() into activeusercur;
+		select anonymous_sessions() into sessioncur;
 		fetch from activeusercur into activeuser;
-		perform users.login('web-session-2', upper(activeuser),
+		fetch from sessioncur into sessionid;
+		perform users.login(sessionid, upper(activeuser),
 			'password');
 		return next results_eq(
 			$$select user_id from web.session 
-				where sess_id = 'web-session-2'$$,
+				where sess_id = '$$ || sessionid || $$'$$,
 			$$select id from users.user 
 				where name = lower('$$ || activeuser || $$')$$,
 			'Login should assign the user to the session.');
@@ -1172,12 +1177,16 @@ create or replace function test_users_function_login_fails_for_incorrect_values(
 returns setof text as $test$
 	declare
 		activeusercur		refcursor;
+		sessioncur		refcursor;
 		activeuser		text;
+		sessionid			text;
 	begin 
 		select active_test_users() into activeusercur;
+		select anonymous_sessions() into sessioncur;
 		fetch from activeusercur into activeuser;
+		fetch from sessioncur into sessionid;
 		return next throws_ok(
-			$$select users.login('web-session-2', 
+			$$select users.login('$$ || sessionid || $$', 
 				'$$ || activeuser || $$', 'wrong')$$, 
 			'P0001', 'Incorrect user name or password.',
 			'Login needs to throw an error on failure.');
@@ -1188,12 +1197,16 @@ create or replace function test_users_function_login_username_only_active()
 returns setof text as $test$
 	declare
 		inactiveusercur	refcursor;
+		sessioncur		refcursor;
 		inactiveuser		text;
+		sessionid			text;
 	begin 
 		select inactive_test_users() into inactiveusercur;
+		select anonymous_sessions() into sessioncur;
 		fetch from inactiveusercur into inactiveuser;
+		fetch from sessioncur into sessionid;
 		return next throws_ok(
-			$$select users.login('web-session-2', 
+			$$select users.login('$$ || sessionid || $$', 
 				'$$ || inactiveuser || $$', 'password')$$, 
 			'P0001', 'Incorrect user name or password.',
 			'Login needs to throw an error for inactive users.');
@@ -1501,6 +1514,46 @@ returns setof text as $test$
 				'$$ || agroup || $$', '$$ || inactiveuser || $$')$$,
 			'P0001', 'User is not available.',
 			'Needs to throw an exception when user is inactive.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_not_missing_users()
+returns setof text as $test$
+	declare 
+		activecur		refcursor;
+		newcur		refcursor;
+		agroup		text;
+		newuser	text;
+	begin
+		select active_test_users() into activecur;
+		select new_test_users() into newcur;
+		fetch from activecur into agroup;
+		fetch from newcur into newuser;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+				'$$ || agroup || $$', '$$ || newuser || $$')$$,
+			'P0001', 'User is not available.',
+			'Needs to throw an exception when user is not there.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_only_active_groups()
+returns setof text as $test$
+	declare 
+		activecur		refcursor;
+		inactivecur	refcursor;
+		nongroup		text;
+		activeuser	text;
+	begin
+		select active_test_users() into activecur;
+		select inactive_test_users() into inactivecur;
+		fetch from activecur into activeuser;
+		fetch from inactivecur into nongroup;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+				'$$ || nongroup || $$', '$$ || activeuser || $$')$$,
+			'P0001', 'Group is not available.',
+			'Needs to throw an exception when is not there.');
 	end;
 $test$ language plpgsql;
 
@@ -2216,16 +2269,22 @@ returns setof text as $func$
 			declare 
 				linkholder		uuid;
 				inviteholder	uuid;
-				userholder	text;
+				textholder	text;
 			begin
-				select users.user.name into userholder
+				select name into textholder
+					from users.group
+					where name = groupname;
+				if not found then
+					raise 'Group is not available.';
+				end if;
+				select users.user.name into textholder
 					from users.user
 					where name = username
 						and active = true;
 				if not found then
 					raise 'User is not available.';
 				end if;
-				select users.user.name into userholder
+				select users.user.name into textholder
 					from users.user,
 						users.group,
 						users.group_user_link
