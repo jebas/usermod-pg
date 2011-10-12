@@ -982,6 +982,30 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_groupuserlink_column_accepted_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'group_user_link', 'accepted',
+			'There should be a column to show if the user choose to join.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_accepted_is_bool()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'group_user_link', 'accepted',
+			'boolean', 'Group user link accepted needs to be Boolean.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_groupuserlink_column_accepted_can_be_null()
+returns setof text as $test$
+	begin
+		return next col_is_null('users', 'group_user_link', 'accepted',
+			'Accepted in group user link can be null');
+	end;
+$test$ language plpgsql; 
+
 create or replace function test_users_table_groupuserlink_has_primary_key()
 returns setof text as $test$
 	begin 
@@ -1292,6 +1316,7 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+/*
 create or replace function test_users_table_groupinvite_exists()
 returns setof text as $test$
 	begin
@@ -1556,6 +1581,19 @@ returns setof text as $test$
 			'Needs to throw an exception when is not there.');
 	end;
 $test$ language plpgsql;
+
+create or replace function test_users_function_agreetojoin_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'agree_to_join_group',
+			array['text', 'uuid', 'boolean'], 'void', 
+			'There needs to be a function to accept the group join.');
+		return next is_definer('users', 'agree_to_join_group', 
+			array['text', 'uuid', 'boolean'], 
+			'Accept group join needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+*/
 
 create or replace function correct_users()
 returns setof text as $func$
@@ -1854,6 +1892,21 @@ returns setof text as $func$
 				on update cascade;
 			return next 'Added the group user link user id foriegn key.';
 		end if;
+		if failed_test('test_users_table_groupuserlink_column_accepted_exists') then
+			alter table users.group_user_link
+				add column accepted boolean;
+			return next 'Added the group acceptance column in group user link.';
+		end if; 
+		if failed_test('test_users_table_groupuserlink_column_accepted_is_bool') then
+			alter table users.group_user_link
+				alter column accepted type boolean;
+			return next 'Made group user link accepted boolean.';
+		end if; 
+		if failed_test('test_users_table_groupuserlink_column_accepted_can_be_null') then 
+			alter table users.group_user_link
+				alter column accepted drop not null;
+			return next 'Removed not null constraint off of accepted in group user link.';
+		end if; 
 		if failed_test('test_users_table_groupuserlink_has_primary_key') then
 			alter table users.group_user_link
 				add primary key (group_id, user_id);
@@ -1899,6 +1952,7 @@ returns setof text as $func$
 			return next 'Linked the session id to the users.';
 		end if;
 		
+		/*
 		if failed_test('test_users_table_groupinvite_exists') then
 			create table users.group_invite();
 			return next 'Created the group invite table.';
@@ -1995,6 +2049,7 @@ returns setof text as $func$
 				on users.group_invite (group_id, user_id);
 			return next 'Created the group user link index.';
 		end if;
+		*/
 		
 		drop trigger if exists protect_anonymous on users.user;
 		drop trigger if exists delete_unvalidated on users.user;
@@ -2261,6 +2316,7 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.logout.';
 		
+		/*
 		create or replace function users.group_user_add(
 			sessid		text,
 			groupname	text,
@@ -2314,6 +2370,19 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.group_user_add.';
+		
+		create or replace function users.agree_to_join_group(
+			sessid		text,
+			thelink		uuid,
+			accepted		boolean)
+		returns void as $$	
+			begin 
+				return;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function to let users join a group.';
+		*/
 		
 		create trigger protect_anonymous
 			before update or delete
@@ -2373,11 +2442,17 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text),
+				sessid		text)
+			/*
 			users.group_user_add(
 				sessid		text,
 				groupname	text,
-				username	text)
+				username	text),
+			users.agree_to_join_group(
+				sessid		text,
+				thelink		uuid,
+				accepted		boolean)
+			*/
 		from public;
 		
 		grant execute on function 
@@ -2403,11 +2478,17 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text),
+				sessid		text)
+			/*
 			users.group_user_add(
 				sessid		text,
 				groupname	text,
-				username	text)
+				username	text),
+			users.agree_to_join_group(
+				sessid		text,
+				thelink		uuid,
+				accepted		boolean)
+			*/
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
