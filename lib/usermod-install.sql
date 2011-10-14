@@ -6,7 +6,8 @@ returns setof text as $test$
 		idholder		uuid;
 		foundid		uuid;
 	begin
-		delete from users.test_user;
+		--delete from users.test_user;
+		perform public.shutdown_20_users();
 		loop
 			select md5(random()::text) into nameholder;
 			select uuid_generate_v4() into idholder;
@@ -77,6 +78,23 @@ returns setof text as $test$
 			or undefined_column then
 			--do nothing
 	end; 
+$test$ language plpgsql;
+
+create or replace function shutdown_20_users()
+returns setof text as $test$
+	begin
+		delete from users.user where name in 
+			(select name from users.test_user);
+		delete from users.group where name in 
+			(select name from users.test_user);
+		delete from users.test_user;
+	exception
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
+			--do nothing
+	end;
 $test$ language plpgsql;
 		
 create or replace function new_test_users()
@@ -1290,20 +1308,21 @@ returns setof text as $test$
 		select active_test_users() into activeusercur;
 		fetch from activeusercur into activeuser;
 		return next bag_has(
-			$$select users.user.name 
+			$$select users.user.name, users.group_user_link.accepted
 				from users.user, users.group, users.group_user_link
 				where users.user.id = users.group_user_link.user_id
 					and users.group.id = users.group_user_link.group_id
 					and users.group.name = 'authenticated'$$,
-			$$values ('$$ || activeuser || $$')$$,
+			$$values ('$$ || activeuser || $$', true)$$,
 			'New users need to be added to the authenticated group.');
 		return next bag_has(
-			$$select users.user.name 
+			$$select users.user.name, users.group_user_link.accepted
 				from users.user, users.group, users.group_user_link
 				where users.user.id = users.group_user_link.user_id
 					and users.group.id = users.group_user_link.group_id
 					and users.group.name = 'everyone'$$,
-			$$values ('$$ || activeuser || $$'), ('anonymous')$$,
+			$$values ('$$ || activeuser || $$', true), 
+				('anonymous', null)$$,
 			'New users need to be added to the everyone group.');
 		return next bag_hasnt(
 			$$select users.user.name 
@@ -2118,10 +2137,11 @@ returns setof text as $func$
 		create or replace function users.update_special_groups()
 		returns trigger as $$
 			begin
-				insert into users.group_user_link (user_id, group_id)
+				insert into users.group_user_link (user_id, group_id, accepted)
 					select
 						users.user.id as user_id,
-						users.group.id as group_id
+						users.group.id as group_id,
+						true as accepted
 					from 
 						users.user left join 
 							(select 
