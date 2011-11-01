@@ -1,4 +1,318 @@
+-- Database installation program for user module.
+create or replace function test_users_schema()
+returns setof text as $$
+	begin 
+		return next has_schema('users', 'There should be a users schema.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_for_uuid_ossp_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^uuid_'),
+			'{}',
+			'uuid-ossp needs to be installed into public.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_for_pgcrypto_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^crypt'),
+			'{}',
+			'pgcrypto needs to be installed into public.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_exists()
+returns setof text as $$
+	begin
+		return next has_table('users', 'user', 'There should be a user table.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_id_exists()
+returns setof text as $$
+	begin
+		return next has_column('users', 'user', 'id', 
+			'Needs a user id column');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_id_is_uuid()
+returns setof text as $$
+	begin
+		return next col_type_is('users', 'user', 'id', 'uuid', 
+			'Users id must be UUID.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_id_is_pk()
+returns setof text as $$
+	begin
+		return next col_is_pk('users', 'user', 'id', 
+			'User id needs to be the primary key.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_active_exists()
+returns setof text as $$
+	begin
+		return next has_column('users', 'user', 'active',
+			'Needs a column to show user status.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_active_is_bool()
+returns setof text as $$
+	begin
+		return next col_type_is('users', 'user', 'active', 'boolean',
+			'Users user active column needs to be boolean.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_active_is_not_null()
+returns setof text as $$
+	begin 
+		return next col_not_null('users', 'user', 'active', 
+			'User active column cannot be null.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_active_defaults_false()
+returns setof text as $$
+	begin 
+		return next col_default_is('users', 'user', 'active',  'false', 
+			'Active column should default to false');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_name_exists()
+returns setof text as $$
+	begin 
+		return next has_column('users', 'user', 'name', 
+			'Need a column of user names.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_name_is_text()
+returns setof text as $$
+	begin 
+		return next col_type_is('users', 'user', 'name', 'text', 
+			'User name needs to be text');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_name_is_not_null()
+returns setof text as $$
+	begin 
+		return next col_not_null('users', 'user', 'name', 
+			'User name column cannot be null.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_function_add_user_name_length()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$insert into users.user (id, name, password, email) values
+				(uuid_generate_v1(), 'four', 'password', 
+				md5(random()::text))$$,
+			'23514', 
+			'new row for relation "user" violates check constraint "name_len"',
+			'User name must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_user_column_password_exists()
+returns setof text as $$
+	begin 
+		return next has_column('users', 'user', 'password', 
+			'Needs a password column');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_password_is_text()
+returns setof text as $$
+	begin
+		return next col_type_is('users', 'user', 'password', 'text', 
+			'Password needs to have a text input.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_password_is_not_null()
+returns setof text as $$
+	begin 
+		return next col_not_null('users', 'user', 'password', 
+			'User passwork cannot be null.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_email_exists()
+returns setof text as $$
+	begin 
+		return next has_column('users', 'user', 'email', 
+			'Needs an email column.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_email_is_text()
+returns setof text as $$
+	begin 
+		return next col_type_is('users', 'user', 'email', 'text', 
+			'Email needs to have a text input.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_column_email_is_not_null()
+returns setof text as $$
+	begin 
+		return next col_not_null('users', 'user', 'email', 
+			'User email column cannot be null.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_index_name_exists()
+returns setof text as $$
+	begin 
+		return next has_index('users', 'user', 'username', 
+			'lower(name)', 
+			'Users.user.name must be lowercase unique');
+		return next index_is_unique('users', 'user', 'username',
+			'Users.user.name must be unique.');
+	end;
+$$ language plpgsql;
+
+create or replace function test_users_table_user_index_email_exists()
+returns setof text as $$
+	begin 
+		return next has_index('users', 'user', 'useremail', 
+			'lower(email)', 
+			'Users.user.email must have a lowercase index.');
+		return next index_is_unique('users', 'user', 'useremail',
+			'Users.user.email must be unique.');
+	end;
+$$ language plpgsql;
+
+create or replace function correct_users()
+returns setof text as $func$
+	begin
+		if failed_test('test_users_schema') then
+			create schema users;
+			return next 'Created users schema';
+		end if;
+
+		if failed_test('test_users_user_exists') then
+			create table users.user();
+			return next 'Created the user''s table.';
+		end if;
+		if failed_test('test_users_table_user_column_id_exists') then
+			alter table users.user
+				add column id uuid;
+			return next 'Created users id column.';
+		end if;
+		if failed_test('test_users_table_user_column_id_is_uuid') then
+			alter table users.user 
+				alter column id type uuid;
+			return next 'Set user''s id column as uuid.';
+		end if;
+		if failed_test('test_users_table_user_column_id_is_pk') then
+			alter table users.user
+				add primary key (id);
+			return next 'Added the primary key to users.user.';
+		end if;
+		if failed_test('test_users_table_user_column_active_exists') then
+			alter table users.user
+				add column active boolean;
+			return next 'Added the active status column.';
+		end if;
+		if failed_test('test_users_table_user_column_active_is_bool') then 
+			alter table users.user
+				alter column active type boolean;
+			return next 'Changed users.user.active to boolean.';
+		end if;
+		if failed_test('test_users_table_user_column_active_is_not_null') then
+			alter table users.user
+				alter column active set not null;
+			return next 'Set users.user.active to not be null.';
+		end if;
+		if failed_test('test_users_table_user_column_active_defaults_false') then
+			alter table users.user
+				alter column active set default false;
+			return next 'Setting the default for users.user.active.';
+		end if;
+		if failed_test('test_users_table_user_column_name_exists') then 
+			alter table users.user
+				add column name text;
+			return next 'Added users.user.name.';
+		end if;
+		if failed_test('test_users_table_user_column_name_is_text') then 
+			alter table users.user
+				alter column active type text;
+			return next 'Changed users.user.name to text.';
+		end if;
+		if failed_test('test_users_table_user_column_name_is_not_null') then
+			alter table users.user
+				alter column name set not null;
+			return next 'Made users.user.name not null.';
+		end if;
+		if failed_test('test_users_function_add_user_name_length') then 
+			alter table users.user
+				add constraint name_len check (length(name) > 4);
+			return next 'Set users.user.name to a minimum of 5 characters.';
+		end if;
+		if failed_test('test_users_table_user_column_password_exists') then
+			alter table users.user 
+				add column password text;
+			return next 'Create the password column for users.user.';
+		end if;
+		if failed_test('test_users_table_user_column_password_is_text') then
+			alter table users.user
+				alter column password type text;
+			return next 'Changed users.user.password to text.';
+		end if;
+		if failed_test('test_users_table_user_column_password_is_not_null') then
+			alter table users.user
+				alter column password set not null;
+			return next 'Set users.user.password to it is not null';
+		end if;
+		if failed_test('test_users_table_user_column_email_exists') then
+			alter table users.user 
+				add column email text;
+			return next 'Added the users.user.email column';
+		end if;
+		if failed_test('test_users_table_user_column_email_is_text') then
+			alter table users.user
+				alter column email type text;
+			return next 'Users.user.email is not type text.';
+		end if;
+		if failed_test('test_users_table_user_column_email_is_not_null') then
+			alter table users.user
+				alter column email set not null;
+			return next 'Set users.user.email to not null.';
+		end if;
+
+		if failed_test('test_users_table_user_index_name_exists') then
+			drop index if exists users.username;
+			create unique index username 
+				on users.user (lower(name));
+			return next 'Created users.user.name index.';
+		end if;
+
+		if failed_test('test_users_table_user_index_email_exists') then
+			drop index if exists users.useremail;
+			create unique index useremail 
+				on users.user (lower(email));
+			return next 'Created users.user.email index.';
+		end if;
+	end;
+$func$ language plpgsql;
+
+
 -- This setup needs to run after webs setup.
+/*
 create or replace function startup_20_users()
 returns setof text as $test$
 	declare
@@ -43,8 +357,9 @@ returns setof text as $test$
 					where id = idholder;
 				insert into users.group (id, name) values
 					(idholder, nameholder);
-				insert into users.group_user_link (group_id, user_id)
-					values (idholder, idholder);
+				insert into users.group_user_link 
+					(group_id, user_id, accepted)
+					values (idholder, idholder, true);
 			end if;
 			exit when (select count(*) > 14 from users.test_user);
 		end loop;
@@ -158,12 +473,6 @@ returns refcursor as $$
 	end;
 $$ language plpgsql;
 		
-create or replace function test_users_schema()
-returns setof text as $$
-	begin 
-		return next has_schema('users', 'There should be a users schema.');
-	end;
-$$ language plpgsql;
 
 create or replace function test_users_table_testusers_exists()
 returns setof text as $test$
@@ -197,172 +506,16 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
-create or replace function test_users_user_exists()
-returns setof text as $$
-	begin
-		return next has_table('users', 'user', 'There should be a user table.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_id_exists()
-returns setof text as $$
-	begin
-		return next has_column('users', 'user', 'id', 
-			'Needs a user id column');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_id_is_uuid()
-returns setof text as $$
-	begin
-		return next col_type_is('users', 'user', 'id', 'uuid', 
-			'Users id must be UUID.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_id_is_pk()
-returns setof text as $$
-	begin
-		return next col_is_pk('users', 'user', 'id', 
-			'User id needs to be the primary key.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_active_exists()
-returns setof text as $$
-	begin
-		return next has_column('users', 'user', 'active',
-			'Needs a column to show user status.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_active_is_bool()
-returns setof text as $$
-	begin
-		return next col_type_is('users', 'user', 'active', 'boolean',
-			'Users user active column needs to be boolean.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_active_is_not_null()
-returns setof text as $$
-	begin 
-		return next col_not_null('users', 'user', 'active', 
-			'User active column cannot be null.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_active_defaults_false()
-returns setof text as $$
-	begin 
-		return next col_default_is('users', 'user', 'active',  'false', 
-			'Active column should default to false');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_name_exists()
-returns setof text as $$
-	begin 
-		return next has_column('users', 'user', 'name', 
-			'Need a column of user names.');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_name_is_text()
-returns setof text as $$
-	begin 
-		return next col_type_is('users', 'user', 'name', 'text', 
-			'User name needs to be text');
-	end;
-$$ language plpgsql;
 
-create or replace function test_users_table_user_column_name_is_not_null()
-returns setof text as $$
-	begin 
-		return next col_not_null('users', 'user', 'name', 
-			'User name column cannot be null.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_password_exists()
-returns setof text as $$
-	begin 
-		return next has_column('users', 'user', 'password', 
-			'Needs a password column');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_password_is_text()
-returns setof text as $$
-	begin
-		return next col_type_is('users', 'user', 'password', 'text', 
-			'Password needs to have a text input.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_password_is_not_null()
-returns setof text as $$
-	begin 
-		return next col_not_null('users', 'user', 'password', 
-			'User passwork cannot be null.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_email_exists()
-returns setof text as $$
-	begin 
-		return next has_column('users', 'user', 'email', 
-			'Needs an email column.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_email_is_text()
-returns setof text as $$
-	begin 
-		return next col_type_is('users', 'user', 'email', 'text', 
-			'Email needs to have a text input.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_column_email_is_not_null()
-returns setof text as $$
-	begin 
-		return next col_not_null('users', 'user', 'email', 
-			'User email column cannot be null.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_index_name_exists()
-returns setof text as $$
-	begin 
-		return next has_index('users', 'user', 'username', 
-			'lower(name)', 
-			'Users.user.name must be lowercase unique');
-		return next index_is_unique('users', 'user', 'username',
-			'Users.user.name must be unique.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_table_user_index_email_exists()
-returns setof text as $$
-	begin 
-		return next has_index('users', 'user', 'useremail', 
-			'lower(email)', 
-			'Users.user.email must have a lowercase index.');
-		return next index_is_unique('users', 'user', 'useremail',
-			'Users.user.email must be unique.');
-	end;
-$$ language plpgsql;
-
-create or replace function test_users_for_uuid_ossp_installation()
-returns setof text as $test$
-	begin 
-		return next isnt(
-			findfuncs('public', '^uuid_'),
-			'{}',
-			'uuid-ossp needs to be installed into public.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_has_anonymous_user()
 returns setof text as $test$
@@ -415,15 +568,6 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
-create or replace function test_users_for_pgcrypto_installation()
-returns setof text as $test$
-	begin 
-		return next isnt(
-			findfuncs('public', '^crypt'),
-			'{}',
-			'pgcrypto needs to be installed into public.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_add_user_exists()
 returns setof text as $test$
@@ -470,18 +614,6 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
-create or replace function test_users_function_add_user_name_length()
-returns setof text as $test$
-	begin
-		return next throws_ok(
-			$$insert into users.user (id, name, password, email) values
-				(uuid_generate_v1(), 'four', 'password', 
-				md5(random()::text))$$,
-			'23514', 
-			'new row for relation "user" violates check constraint "name_len"',
-			'User name must be a minimum of 5 characters.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_add_user_password_length()
 returns setof text as $test$
@@ -1040,7 +1172,8 @@ returns setof text as $test$
 			$$select cast(count(*) as int) 
 				from users.group_user_link, users.group
 				where users.group.id = users.group_user_link.group_id
-				and users.group.name = 'admin'$$,
+				and users.group.name = 'admin'
+				and users.group_user_link.accepted = true$$,
 			$$values (0)$$,
 			'There needs to be at least on admin user.');
 	end;
@@ -1322,7 +1455,7 @@ returns setof text as $test$
 					and users.group.id = users.group_user_link.group_id
 					and users.group.name = 'everyone'$$,
 			$$values ('$$ || activeuser || $$', true), 
-				('anonymous', null)$$,
+				('anonymous', true)$$,
 			'New users need to be added to the everyone group.');
 		return next bag_hasnt(
 			$$select users.user.name 
@@ -1334,6 +1467,92 @@ returns setof text as $test$
 			'Anonymous cannot be part of the authenticated group.');
 	end;
 $test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'group_user_add',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a function to add users to a group.');
+		return next is_definer('users', 'group_user_add', 
+			array['text', 'text', 'text'], 
+			'Logout needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_adds_data()
+returns setof text as $test$
+	declare
+		activeusercur		refcursor;
+		activeuser		text;
+		groupname		text;
+	begin 
+		select active_test_users() into activeusercur;
+		fetch from activeusercur into activeuser;
+		fetch from activeusercur into groupname;
+		perform users.group_user_add('web-session-1', groupname,
+			activeuser);
+		return next results_eq(
+			$$select
+				users.group.name,
+				users.user.name,
+				users.group_user_link.accepted is null
+			from 
+				users.user,
+				users.group,
+				users.group_user_link
+			where
+				users.user.id = users.group_user_link.user_id
+				and users.group.id = users.group_user_link.group_id
+				and users.user.name = '$$ || activeuser || $$'
+				and users.group.name = '$$ || groupname || $$'$$,
+			$$values ('$$ || groupname || $$', 
+				'$$ || activeuser || $$', true)$$,
+			'Group Add should add the user to the group.');
+	end;
+$test$ language plpgsql;
+
+
+create or replace function test_users_function_addgroupuser_errors_invalid_user()
+returns setof text as $test$
+	declare 
+		activeusercur		refcursor;
+		groupname		text;
+		newusercur		refcursor;
+		newuser			text;
+	begin
+		select active_test_users() into activeusercur;
+		select new_test_users() into newusercur;
+		fetch from activeusercur into groupname;
+		fetch from newusercur into newuser;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+			'$$ || groupname || $$', '$$ || newuser || $$')$$,
+			'23502', 'null value in column "user_id" violates not-null constraint',
+			'There should be an error when the user does not exist.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupuser_errors_inactive_user()
+returns setof text as $test$
+	declare 
+		activeusercur		refcursor;
+		groupname		text;
+		inactiveusercur	refcursor;
+		inactiveuser		text;
+	begin
+		select active_test_users() into activeusercur;
+		select inactive_test_users() into inactiveusercur;
+		fetch from activeusercur into groupname;
+		fetch from inactiveusercur into inactiveuser;
+		return next throws_ok(
+			$$select users.group_user_add('web-session-1',
+			'$$ || groupname || $$', '$$ || inactiveuser || $$')$$,
+			'23502', 'null value in column "user_id" violates not-null constraint',
+			'There should be an error when the user is inactive.');
+	end;
+$test$ language plpgsql;
+*/
 
 /*
 create or replace function test_users_table_groupinvite_exists()
@@ -1481,17 +1700,6 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;  
 
-create or replace function test_users_function_addgroupuser_exists()
-returns setof text as $test$
-	begin 
-		return next function_returns('users', 'group_user_add',
-			array['text', 'text', 'text'], 'uuid', 
-			'There needs to be a function to add users to a group.');
-		return next is_definer('users', 'group_user_add', 
-			array['text', 'text', 'text'], 
-			'Logout needs to securite definer access.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_addgroupuser_adds_data()
 returns setof text as $test$
@@ -1614,15 +1822,35 @@ returns setof text as $test$
 $test$ language plpgsql;
 */
 
+/*
+create or replace function test_users_function_userpermission_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'user_permission',
+			array['text', 'uuid'], 'boolean', 
+			'There needs to be a function to control user function premissions.');
+		return next is_definer('users', 'user_permission', 
+			array['text', 'uuid'], 
+			'User permissions needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_userpermission_admin_passes()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select users.user_permission('web-session-1', 
+				public.uuid_nil())$$,
+			$$values (true)$$,
+			'Admin always has permission.');
+	end;
+$test$ language plpgsql;  
+
 create or replace function correct_users()
 returns setof text as $func$
 	declare 
 		group_list		text[]:=array['admin', 'everyone', 'authenticated'];
 	begin
-		if failed_test('test_users_schema') then
-			create schema users;
-			return next 'Created users schema';
-		end if;
 		
 		if failed_test('test_users_table_testusers_exists') then 
 			create table users.test_user();
@@ -1644,109 +1872,7 @@ returns setof text as $func$
 			return next 'Added the primary key to test users.';
 		end if;  
 		
-		if failed_test('test_users_user_exists') then
-			create table users.user();
-			return next 'Created the user''s table.';
-		end if;
-		if failed_test('test_users_table_user_column_id_exists') then
-			alter table users.user
-				add column id uuid;
-			return next 'Created users id column.';
-		end if;
-		if failed_test('test_users_table_user_column_id_is_uuid') then
-			alter table users.user 
-				alter column id type uuid;
-			return next 'Set user''s id column as uuid.';
-		end if;
-		if failed_test('test_users_table_user_column_id_is_pk') then
-			alter table users.user
-				add primary key (id);
-			return next 'Added the primary key to users.user.';
-		end if;
-		if failed_test('test_users_table_user_column_active_exists') then
-			alter table users.user
-				add column active boolean;
-			return next 'Added the active status column.';
-		end if;
-		if failed_test('test_users_table_user_column_active_is_bool') then 
-			alter table users.user
-				alter column active type boolean;
-			return next 'Changed users.user.active to boolean.';
-		end if;
-		if failed_test('test_users_table_user_column_active_is_not_null') then
-			alter table users.user
-				alter column active set not null;
-			return next 'Set users.user.active to not be null.';
-		end if;
-		if failed_test('test_users_table_user_column_active_defaults_false') then
-			alter table users.user
-				alter column active set default false;
-			return next 'Setting the default for users.user.active.';
-		end if;
-		if failed_test('test_users_table_user_column_name_exists') then 
-			alter table users.user
-				add column name text;
-			return next 'Added users.user.name.';
-		end if;
-		if failed_test('test_users_table_user_column_name_is_text') then 
-			alter table users.user
-				alter column active type text;
-			return next 'Changed users.user.name to text.';
-		end if;
-		if failed_test('test_users_table_user_column_name_is_not_null') then
-			alter table users.user
-				alter column name set not null;
-			return next 'Made users.user.name not null.';
-		end if;
-		if failed_test('test_users_function_add_user_name_length') then 
-			alter table users.user
-				add constraint name_len check (length(name) > 4);
-			return next 'Set users.user.name to a minimum of 5 characters.';
-		end if;
-		if failed_test('test_users_table_user_column_password_exists') then
-			alter table users.user 
-				add column password text;
-			return next 'Create the password column for users.user.';
-		end if;
-		if failed_test('test_users_table_user_column_password_is_text') then
-			alter table users.user
-				alter column password type text;
-			return next 'Changed users.user.password to text.';
-		end if;
-		if failed_test('test_users_table_user_column_password_is_not_null') then
-			alter table users.user
-				alter column password set not null;
-			return next 'Set users.user.password to it is not null';
-		end if;
-		if failed_test('test_users_table_user_column_email_exists') then
-			alter table users.user 
-				add column email text;
-			return next 'Added the users.user.email column';
-		end if;
-		if failed_test('test_users_table_user_column_email_is_text') then
-			alter table users.user
-				alter column email type text;
-			return next 'Users.user.email is not type text.';
-		end if;
-		if failed_test('test_users_table_user_column_email_is_not_null') then
-			alter table users.user
-				alter column email set not null;
-			return next 'Set users.user.email to not null.';
-		end if;
 		
-		if failed_test('test_users_table_user_index_name_exists') then
-			drop index if exists users.username;
-			create unique index username 
-				on users.user (lower(name));
-			return next 'Created users.user.name index.';
-		end if;
-
-		if failed_test('test_users_table_user_index_email_exists') then
-			drop index if exists users.useremail;
-			create unique index useremail 
-				on users.user (lower(email));
-			return next 'Created users.user.email index.';
-		end if;
 		
 		if failed_test('test_users_has_anonymous_user') then
 			insert into users.user (id, active, name, password, email) 
@@ -1937,11 +2063,13 @@ returns setof text as $func$
 				(uuid_generate_v5(uuid_ns_x500(), 'admin'), true,
 				'admin', public.crypt('admin', 
 					public.gen_salt('bf')), 'to be assigned');
-			insert into users.group_user_link (group_id, user_id) values
+			insert into users.group_user_link 
+				(group_id, user_id, accepted) values
 				((select id from users.group 
 					where name = lower('admin')), 
 				(select id from users.user
-					where name = lower('admin')));
+					where name = lower('admin')),
+				true);
 			return next 'Created an admin user.';
 		end if;
 		
@@ -1970,7 +2098,7 @@ returns setof text as $func$
 				on update cascade;
 			return next 'Linked the session id to the users.';
 		end if;
-		
+*/		
 		/*
 		if failed_test('test_users_table_groupinvite_exists') then
 			create table users.group_invite();
@@ -2069,7 +2197,7 @@ returns setof text as $func$
 			return next 'Created the group user link index.';
 		end if;
 		*/
-		
+/*		
 		drop trigger if exists protect_anonymous on users.user;
 		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists update_special_groups on users.user;
@@ -2158,10 +2286,11 @@ returns setof text as $func$
 					where 
 						grouping.grpname is null
 						and users.group.name = 'everyone';
-				insert into users.group_user_link (user_id, group_id)
+				insert into users.group_user_link (user_id, group_id, accepted)
 					select
 						users.user.id as user_id,
-						users.group.id as group_id
+						users.group.id as group_id,
+						true as accepted
 					from 
 						users.user left join 
 							(select 
@@ -2336,6 +2465,48 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.logout.';
 		
+		create or replace function users.group_user_add(
+			sessid		text,
+			groupname	text,
+			username	text)
+		returns void as $$
+			begin
+				insert into users.group_user_link 
+					(group_id, user_id)
+					values 
+					((select id from users.group 
+					where name = groupname),
+					(select id from users.user
+					where name = username
+					and active = true));
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.group_user_add.';
+		
+		create or replace function users.user_permission(
+			sessid		text,
+			function_id	uuid)
+		returns boolean as $$
+			declare 
+				userid	uuid;
+			begin
+				select 
+					web.session.user_id into userid
+				from 
+					web.session,
+					users.group_user_link,
+					users.group
+				where
+					web.session.user_id = users.group_user_link.user_id
+					and users.group.id = users.group_user_link.group_id
+					and users.group.name = 'admin';
+				return found;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.user_permission.';
+*/		
 		/*
 		create or replace function users.group_user_add(
 			sessid		text,
@@ -2403,7 +2574,7 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function to let users join a group.';
 		*/
-		
+/*		
 		create trigger protect_anonymous
 			before update or delete
 			on users.user
@@ -2462,18 +2633,19 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
-			/*
+				sessid		text),
 			users.group_user_add(
 				sessid		text,
 				groupname	text,
-				username	text),
+				username	text)
+*/
+						/*
 			users.agree_to_join_group(
 				sessid		text,
 				thelink		uuid,
 				accepted		boolean)
 			*/
-		from public;
+/*		from public;
 		
 		grant execute on function 
 			users.add_user(
@@ -2498,25 +2670,26 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
-			/*
+				sessid		text),
 			users.group_user_add(
 				sessid		text,
 				groupname	text,
-				username	text),
+				username	text)
+*/
+						/*
 			users.agree_to_join_group(
 				sessid		text,
 				thelink		uuid,
 				accepted		boolean)
 			*/
-		to nodepg;
+/*		to nodepg;
 		
 		grant usage on schema users to nodepg;
 		
 		return next 'Permissions set.';
 	end;
 $func$ language plpgsql;
-
+*/
 
 
 
