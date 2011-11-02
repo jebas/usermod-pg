@@ -196,6 +196,16 @@ returns setof text as $$
 	end;
 $$ language plpgsql;
 
+create or replace function test_users_has_anonymous_user()
+returns setof text as $test$
+	begin 
+		return next results_eq(
+			$$select * from users.user where name = 'anonymous'$$,
+			$$values (uuid_nil(), true, 'anonymous', '', '')$$,
+			'There should be an anonymous user with an all zeros id.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -306,6 +316,13 @@ returns setof text as $func$
 			create unique index useremail 
 				on users.user (lower(email));
 			return next 'Created users.user.email index.';
+		end if;
+
+		if failed_test('test_users_has_anonymous_user') then
+			insert into users.user (id, active, name, password, email) 
+				values
+				(uuid_nil(), true, 'anonymous', '','');
+			return next 'Added the anonymous user.';
 		end if;
 	end;
 $func$ language plpgsql;
@@ -517,15 +534,6 @@ $test$ language plpgsql;
 
 
 
-create or replace function test_users_has_anonymous_user()
-returns setof text as $test$
-	begin 
-		return next results_eq(
-			$$select * from users.user where name = 'anonymous'$$,
-			$$values (uuid_nil(), true, 'anonymous', '', '')$$,
-			'There should be an anonymous user with an all zeros id.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_protect_anonymous()
 returns setof text as $test$
@@ -1874,12 +1882,6 @@ returns setof text as $func$
 		
 		
 		
-		if failed_test('test_users_has_anonymous_user') then
-			insert into users.user (id, active, name, password, email) 
-				values
-				(uuid_nil(), true, 'anonymous', '','');
-			return next 'Added the anonymous user.';
-		end if;
 		
 		if failed_test('test_users_table_validate_exists') then
 			create table users.validate();
