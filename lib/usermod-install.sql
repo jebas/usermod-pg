@@ -1,4 +1,119 @@
 -- Database installation program for user module.
+create or replace function startup_20_users()
+returns setof text as $test$
+	declare
+		nameholder	text;
+		idholder	uuid;
+		foundid		uuid;
+		foundname	text;
+	begin
+		--delete from users.test_user;
+		perform public.shutdown_20_users();
+		loop
+			select md5(random()::text) into nameholder;
+			select name into foundname 
+				from users.test_user
+				where name = nameholder;
+			if found then
+				continue;
+			end if;
+			select uuid_generate_v4() into idholder;
+			select id into foundid 
+				from users.user
+				where name = lower(nameholder)
+					or email = lower(nameholder)
+					or id = idholder;
+			if found then
+				continue;
+			end if;
+			insert into users.test_user (name) 
+				values (nameholder);
+			if (select count(*) > 5 from users.test_user) then
+				-- Create inactive users for testing.  
+				insert into users.user (id, name, password, email)
+					values (idholder, nameholder,
+					public.crypt('password', public.gen_salt('bf')),
+					nameholder);
+			end if;
+			if (select count(*) > 10 from users.test_user) then
+				-- Make active users for testing.
+				update users.user set active = true 
+					where id = idholder;
+			end if;
+			exit when (select count(*) > 14 from users.test_user);
+		end loop;
+	exception
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
+			--do nothing
+	end;
+$test$ language plpgsql;
+
+create or replace function shutdown_20_users()
+returns setof text as $test$
+	begin
+		delete from users.user where name in 
+			(select name from users.test_user);
+		delete from users.test_user;
+	exception
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
+			--do nothing
+	end;
+$test$ language plpgsql;
+
+create or replace function new_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active is null;
+		return refcur;
+	end;
+$$ language plpgsql;  
+
+create or replace function inactive_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active = false;
+		return refcur;
+	end;
+$$ language plpgsql;  
+
+create or replace function active_test_users()
+returns refcursor as $$
+	declare 
+		refcur	refcursor;
+	begin
+		open refcur for 
+			select users.test_user.name
+			from users.test_user
+			left outer join users.user on 
+				(lower(users.test_user.name) = 
+				users.user.name)
+			where users.user.active = true;
+		return refcur;
+	end;
+$$ language plpgsql;  
+
 create or replace function test_users_schema()
 returns setof text as $$
 	begin 
@@ -32,6 +147,38 @@ returns setof text as $$
 		return next has_table('users', 'user', 'There should be a user table.');
 	end;
 $$ language plpgsql;
+
+create or replace function test_users_table_testusers_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'test_user', 
+			'There should be a table to hold test users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_testusers_column_name_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'test_user', 'name',
+			'Needs a user name column in test users.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testuser_column_name_is_text()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'test_user', 'name', 'text',
+			'The test user name needs to be text.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testuser_column_name_is_pk()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'test_user', 'name',
+			'Name should be primary key for test users.');
+	end;
+$test$ language plpgsql;
 
 create or replace function test_users_table_user_column_id_exists()
 returns setof text as $$
@@ -206,6 +353,185 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_validate_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'validate',
+			'Need a table for unvalidated users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate', 'link',
+			'Needs a validation link column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate', 'link', 'uuid',
+			'The validation link needs to be a uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_link_is_pk()
+returns setof text as $test$
+	begin 
+		return next col_is_pk('users', 'validate', 'link',
+			'Validate needs link to be the primary key.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'validate', 'user_id',
+			'Validate needs a link to the user table.');
+	end; 
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('users', 'validate', 'user_id', 'uuid',
+			'Validation user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_userid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'validate', 'user_id',
+			'users', 'user', 'id',
+			'Validate user id needs to link to the user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate', 'expire',
+			'Validate needs an expriration column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_is_timestamp()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate', 'expire',
+			'timestamp with time zone',
+			'Needs to know when the unvalidated user expires.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_cloumn_expire_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'validate', 'expire',
+			'Validate expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'validate', 'expire',
+			$$(now() + '7 days'::interval)$$,
+			'Validate expire needs to be set to the future.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validate_column_expire_is_indexed()
+returns setof text as $test$
+	begin
+		return next has_index('users', 'validate', 'valid_expire',
+			'expire', 'Validate''s expire column needs an index.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_adduser_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'add_user', 
+			array['text', 'text', 'text'], 'record',
+			'There needs to be an add user function.');
+		return next is_definer('users', 'add_user', 
+			array['text', 'text', 'text'],
+			'Add user should have definer security.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_adduser_inserts_data()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		user1			text;
+		theemail		text;
+		thelink			uuid;
+	begin
+		select into newusercur new_test_users();
+		fetch from newusercur into user1;
+		select into theemail, thelink emailaddr, validlink
+			from users.add_user(user1, 'password', user1);
+		return next is(theemail, user1,
+			'User add needs to return the user''s email address.');
+		return next results_eq(
+			$$select active, name, email from users.user 
+				where name = '$$ || user1 || $$'$$,
+			$$values (false, '$$ || user1 || $$', 
+				'$$ || user1 || $$')$$,
+			'add_user needs to add the user to users.user.');
+	end;
+$test$ language plpgsql;
+/*
+create or replace function test_users_function_add_user_inserts_data()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		user1			text;
+		holder			text;
+	begin
+		select new_test_users() into newusercur;
+		fetch from newusercur into user1;
+		select add_user into holder from
+			users.add_user(user1, 'password', user1);
+		return next results_ne(
+			$$select password from users.user
+				where name = '$$ || user1 || $$'$$,
+			$$values ('password')$$,
+			'User''s password needs to be encrypted.');
+		return next results_eq(
+			$$select cast(users.validate.link as text)
+				from users.validate, users.user
+				where users.user.id = users.validate.user_id
+					and users.user.name = '$$ || user1 || $$'$$,
+			array[holder],
+			'User add must output the validation link');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_add_user_password_length()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		user1			text;
+	begin
+		select new_test_users() into newusercur;
+		fetch from newusercur into user1;
+		return next throws_ok(
+			$$select users.add_user( 
+				'$$ || user1 || $$',
+				'four', '$$ || user1 || $$')$$,
+			'23514', 
+			'new row for relation "user" violates check constraint "passwd_len"',
+			'User password must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+*/
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -213,6 +539,26 @@ returns setof text as $func$
 			create schema users;
 			return next 'Created users schema';
 		end if;
+
+		if failed_test('test_users_table_testusers_exists') then 
+			create table users.test_user();
+			return next 'Created the test users table.';
+		end if;
+		if failed_test('test_users_table_testusers_column_name_exists') then
+			alter table users.test_user
+				add column name text;
+			return next 'Added the user name column to test users.';
+		end if;
+		if failed_test('test_users_table_testuser_column_name_is_text') then
+			alter table users.test_user
+				alter column name type text;
+			return next 'Altered test user name to text.';
+		end if;  
+		if failed_test('test_users_table_testuser_column_name_is_pk') then
+			alter table users.test_user
+				add primary key (name);
+			return next 'Added the primary key to test users.';
+		end if;  
 
 		if failed_test('test_users_user_exists') then
 			create table users.user();
@@ -324,70 +670,163 @@ returns setof text as $func$
 				(uuid_nil(), true, 'anonymous', '','');
 			return next 'Added the anonymous user.';
 		end if;
+
+		if failed_test('test_users_table_validate_exists') then
+			create table users.validate();
+			return next 'Created the validate table.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_exists') then
+			alter table users.validate
+				add column link uuid;
+			return next 'Added the link column to validation table.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_is_uuid') then
+			alter table users.validate
+				alter column link type uuid;
+			return next 'Made validation link a uuid.';
+		end if;
+		if failed_test('test_users_table_validate_column_link_is_pk') then
+			alter table users.validate
+				add primary key (link);
+			return next 'Added primary key to validate.';
+		end if;
+		if failed_test('test_users_table_validate_column_userid_exists') then
+			alter table users.validate
+				add column user_id uuid;
+			return next 'Added user id to validate table.';
+		end if;
+		if failed_test('test_users_table_validate_column_userid_is_uuid') then
+			alter table users.validate
+				alter column user_id type uuid;
+		end if;
+		if failed_test('test_users_table_validate_column_userid_is_fk') then
+			alter table users.validate
+				add constraint validate_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Added the validate user link user id foriegn key.';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_exists') then
+			alter table users.validate
+				add column expire timestamp with time zone;
+			return next 'Added the expiration timestamp to validate';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_is_timestamp') then
+			alter table users.validate
+				alter column expire type timestamp with time zone;
+			return next 'Made validate''s expire a timestamp.';
+		end if;
+		if failed_test('test_users_table_validate_cloumn_expire_is_not_null') then
+			alter table users.validate
+				alter column expire set not null;
+			return next 'Making validate expire not null';
+		end if;
+		if failed_test('test_users_table_validate_column_expire_has_default') then
+			alter table users.validate
+				alter column expire set default now() + interval '7 days';
+			return next 'Set validate expire to be in the future.';
+		end if;
+		
+		if failed_test('test_users_table_validate_column_expire_is_indexed') then
+			create index valid_expire on users.validate (expire);
+			return next 'Created the validation expiration index.';
+		end if;
+		
+		create or replace function users.add_user(
+			username	text,
+			passwd		text,
+			useremail	text,
+			out		emailaddr		text,
+			out		validlink		uuid)
+		as $$
+			declare
+				name_holder	text;
+				new_uid		uuid;
+			begin
+				loop
+					select public.uuid_generate_v4() into new_uid;
+					select name into name_holder 
+						from users.user
+						where id = new_uid;
+					exit when not found;
+				end loop;
+				insert into users.user (id, name, password, email) 
+					values (new_uid, username, 
+						public.crypt(passwd, 
+							public.gen_salt('bf')), 
+						useremail);
+				emailaddr := useremail;
+				validlink := public.uuid_nil();
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.add_user.';
+
+		/*
+		create or replace function users.add_user(
+			username	text,
+			passwd		text,
+			useremail	text)
+		returns uuid as $$
+			declare
+				link_holder	uuid;
+				new_uid		uuid;
+				name_holder	text;
+			begin
+				if length(passwd) < 5 then
+					raise 'new row for relation "user" violates check constraint "passwd_len"' 
+						using errcode = 'check_violation';
+				end if;
+				loop
+					select public.uuid_generate_v4() into new_uid;
+					select name into name_holder 
+						from users.user
+						where id = new_uid;
+					exit when not found;
+				end loop;
+				insert into users.user (id, name, password, email) 
+					values (new_uid, username, 
+						public.crypt(passwd, 
+							public.gen_salt('bf')), 
+						useremail);
+				select public.uuid_generate_v5(
+					public.uuid_ns_x500(),
+					lower(username)) into link_holder;
+				insert into users.validate (link, user_id) values
+					(link_holder, new_uid);
+				return link_holder;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.add_user.';
+		*/
+		
+		revoke all on function 
+			users.add_user(
+				username	text,
+				passwd		text,
+				useremail	text)
+		from public;
+		
+		grant execute on function 
+			users.add_user(
+				username	text,
+				passwd		text,
+				useremail	text)
+		to nodepg;
+		
+		grant usage on schema users to nodepg;
+		
+		return next 'Permissions set.';		
 	end;
 $func$ language plpgsql;
 
 
 -- This setup needs to run after webs setup.
 /*
-create or replace function startup_20_users()
-returns setof text as $test$
-	declare
-		nameholder	text;
-		idholder		uuid;
-		foundid		uuid;
-	begin
-		--delete from users.test_user;
-		perform public.shutdown_20_users();
-		loop
-			select md5(random()::text) into nameholder;
-			select uuid_generate_v4() into idholder;
-			select id into foundid 
-				from users.user
-				where name = lower(nameholder)
-					or email = lower(nameholder)
-					or id = idholder;
-			if found then
-				continue;
-			end if;
-			select id into foundid 
-				from users.group
-				where name = lower(nameholder)
-					or id = idholder;
-			if found then
-				continue;
-			end if;
-			-- Create a list of safe unused user names for testing.  
-			insert into users.test_user (name) 
-				values (nameholder);
-			if (select count(*) > 5 from users.test_user) then
-				-- Create inactive users for testing.  
-				insert into users.user (id, name, password, email)
-					values (idholder, nameholder,
-					public.crypt('password', public.gen_salt('bf')),
-					nameholder);
-			end if;
-			if (select count(*) > 10 from users.test_user) then
-				-- Make users active and assign them to a group 
-				-- with an identical name and id.  
-				update users.user set active = true 
-					where id = idholder;
-				insert into users.group (id, name) values
-					(idholder, nameholder);
-				insert into users.group_user_link 
-					(group_id, user_id, accepted)
-					values (idholder, idholder, true);
-			end if;
-			exit when (select count(*) > 14 from users.test_user);
-		end loop;
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
-	end;
-$test$ language plpgsql;
 
 create or replace function setup_20_users()
 returns setof text as $test$
@@ -412,70 +851,7 @@ returns setof text as $test$
 	end; 
 $test$ language plpgsql;
 
-create or replace function shutdown_20_users()
-returns setof text as $test$
-	begin
-		delete from users.user where name in 
-			(select name from users.test_user);
-		delete from users.group where name in 
-			(select name from users.test_user);
-		delete from users.test_user;
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
-	end;
-$test$ language plpgsql;
 		
-create or replace function new_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select users.test_user.name
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active is null;
-		return refcur;
-	end;
-$$ language plpgsql;  
-
-create or replace function inactive_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select users.test_user.name
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active = false;
-		return refcur;
-	end;
-$$ language plpgsql;  
-
-create or replace function active_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select users.test_user.name
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active = true;
-		return refcur;
-	end;
-$$ language plpgsql;  
 
 create or replace function anonymous_sessions()
 returns refcursor as $$
@@ -491,37 +867,6 @@ returns refcursor as $$
 $$ language plpgsql;
 		
 
-create or replace function test_users_table_testusers_exists()
-returns setof text as $test$
-	begin
-		return next has_table('users', 'test_user', 
-			'There should be a table to hold test users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_testusers_column_name_exists()
-returns setof text as $test$
-	begin
-		return next has_column('users', 'test_user', 'name',
-			'Needs a user name column in test users.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testuser_column_name_is_text()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'test_user', 'name', 'text',
-			'The test user name needs to be text.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testuser_column_name_is_pk()
-returns setof text as $test$
-	begin 
-		return next col_is_pk('users', 'test_user', 'name',
-			'Name should be primary key for test users.');
-	end;
-$test$ language plpgsql;
 
 
 
@@ -577,168 +922,7 @@ returns setof text as $test$
 $test$ language plpgsql;
 
 
-create or replace function test_users_function_add_user_exists()
-returns setof text as $test$
-	begin
-		return next function_returns('users', 'add_user', 
-			array['text', 'text', 'text', 'text'], 'uuid',
-			'There needs to be an add user function.');
-		return next is_definer('users', 'add_user', 
-			array['text', 'text', 'text', 'text'],
-			'Add user should have definer security.');
-	end;
-$test$ language plpgsql;
 
-create or replace function test_users_function_add_user_inserts_data()
-returns setof text as $test$
-	declare
-		newusercur		refcursor;
-		user1			text;
-		holder			text;
-	begin
-		select new_test_users() into newusercur;
-		fetch from newusercur into user1;
-		select add_user into holder from
-			users.add_user('web-session-1', user1, 'password',
-				user1);
-		return next results_eq(
-			$$select active, name, email from users.user 
-				where name = '$$ || user1 || $$'$$,
-			$$values (false, '$$ || user1 || $$', 
-				'$$ || user1 || $$')$$,
-			'add_user needs to add the user to users.user.');
-		return next results_ne(
-			$$select password from users.user
-				where name = '$$ || user1 || $$'$$,
-			$$values ('password')$$,
-			'User''s password needs to be encrypted.');
-		return next results_eq(
-			$$select cast(users.validate.link as text)
-				from users.validate, users.user
-				where users.user.id = users.validate.user_id
-					and users.user.name = '$$ || user1 || $$'$$,
-			array[holder],
-			'User add must output the validation link');
-	end;
-$test$ language plpgsql;
-
-
-create or replace function test_users_function_add_user_password_length()
-returns setof text as $test$
-	declare
-		newusercur		refcursor;
-		user1			text;
-	begin
-		select new_test_users() into newusercur;
-		fetch from newusercur into user1;
-		return next throws_ok(
-			$$select users.add_user('web-session-1', 
-				'$$ || user1 || $$',
-				'four', '$$ || user1 || $$')$$,
-			'23514', 
-			'new row for relation "user" violates check constraint "passwd_len"',
-			'User password must be a minimum of 5 characters.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_exists()
-returns setof text as $test$
-	begin 
-		return next has_table('users', 'validate',
-			'Need a table for unvalidated users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_link_exists()
-returns setof text as $test$
-	begin 
-		return next has_column('users', 'validate', 'link',
-			'Needs a validation link column.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_link_is_uuid()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'validate', 'link', 'uuid',
-			'The validation link needs to be a uuid.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_link_is_pk()
-returns setof text as $test$
-	begin 
-		return next col_is_pk('users', 'validate', 'link',
-			'Validate needs link to be the primary key.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_userid_exists()
-returns setof text as $test$
-	begin
-		return next has_column('users', 'validate', 'user_id',
-			'Validate needs a link to the user table.');
-	end; 
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_userid_is_uuid()
-returns setof text as $test$
-	begin 
-		return next col_type_is('users', 'validate', 'user_id', 'uuid',
-			'Validation user id needs to be uuid.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_userid_is_fk()
-returns setof text as $test$
-	begin
-		return next fk_ok('users', 'validate', 'user_id',
-			'users', 'user', 'id',
-			'Validate user id needs to link to the user.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_expire_exists()
-returns setof text as $test$
-	begin 
-		return next has_column('users', 'validate', 'expire',
-			'Validate needs an expriration column.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_expire_is_timestamp()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'validate', 'expire',
-			'timestamp with time zone',
-			'Needs to know when the unvalidated user expires.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_cloumn_expire_is_not_null()
-returns setof text as $test$
-	begin
-		return next col_not_null('users', 'validate', 'expire',
-			'Validate expire cannot be null.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_expire_has_default()
-returns setof text as $test$
-	begin
-		return next col_default_is('users', 'validate', 'expire',
-			$$(now() + '7 days'::interval)$$,
-			'Validate expire needs to be set to the future.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_validate_column_expire_is_indexed()
-returns setof text as $test$
-	begin
-		return next has_index('users', 'validate', 'valid_expire',
-			'expire', 'Validate''s expire column needs an index.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_validate_exists()
 returns setof text as $test$
@@ -1860,92 +2044,11 @@ returns setof text as $func$
 		group_list		text[]:=array['admin', 'everyone', 'authenticated'];
 	begin
 		
-		if failed_test('test_users_table_testusers_exists') then 
-			create table users.test_user();
-			return next 'Created the test users table.';
-		end if;
-		if failed_test('test_users_table_testusers_column_name_exists') then
-			alter table users.test_user
-				add column name text;
-			return next 'Added the user name column to test users.';
-		end if;
-		if failed_test('test_users_table_testuser_column_name_is_text') then
-			alter table users.test_user
-				alter column name type text;
-			return next 'Altered test user name to text.';
-		end if;  
-		if failed_test('test_users_table_testuser_column_name_is_pk') then
-			alter table users.test_user
-				add primary key (name);
-			return next 'Added the primary key to test users.';
-		end if;  
 		
 		
 		
 		
-		if failed_test('test_users_table_validate_exists') then
-			create table users.validate();
-			return next 'Created the validate table.';
-		end if;
-		if failed_test('test_users_table_validate_column_link_exists') then
-			alter table users.validate
-				add column link uuid;
-			return next 'Added the link column to validation table.';
-		end if;
-		if failed_test('test_users_table_validate_column_link_is_uuid') then
-			alter table users.validate
-				alter column link type uuid;
-			return next 'Made validation link a uuid.';
-		end if;
-		if failed_test('test_users_table_validate_column_link_is_pk') then
-			alter table users.validate
-				add primary key (link);
-			return next 'Added primary key to validate.';
-		end if;
-		if failed_test('test_users_table_validate_column_userid_exists') then
-			alter table users.validate
-				add column user_id uuid;
-			return next 'Added user id to validate table.';
-		end if;
-		if failed_test('test_users_table_validate_column_userid_is_uuid') then
-			alter table users.validate
-				alter column user_id type uuid;
-		end if;
-		if failed_test('test_users_table_validate_column_userid_is_fk') then
-			alter table users.validate
-				add constraint validate_usrid 
-				foreign key (user_id) 
-				references users.user (id)
-				match full
-				on delete cascade
-				on update cascade;
-			return next 'Added the validate user link user id foriegn key.';
-		end if;
-		if failed_test('test_users_table_validate_column_expire_exists') then
-			alter table users.validate
-				add column expire timestamp with time zone;
-			return next 'Added the expiration timestamp to validate';
-		end if;
-		if failed_test('test_users_table_validate_column_expire_is_timestamp') then
-			alter table users.validate
-				alter column expire type timestamp with time zone;
-			return next 'Made validate''s expire a timestamp.';
-		end if;
-		if failed_test('test_users_table_validate_cloumn_expire_is_not_null') then
-			alter table users.validate
-				alter column expire set not null;
-			return next 'Making validate expire not null';
-		end if;
-		if failed_test('test_users_table_validate_column_expire_has_default') then
-			alter table users.validate
-				alter column expire set default now() + interval '7 days';
-			return next 'Set validate expire to be in the future.';
-		end if;
 		
-		if failed_test('test_users_table_validate_column_expire_is_indexed') then
-			create index valid_expire on users.validate (expire);
-			return next 'Created the validation expiration index.';
-		end if;
 		
 		if failed_test('test_users_table_group_exists') then
 			create table users.group();
@@ -2328,43 +2431,6 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.delete_unvalidated.';
 
-		create or replace function users.add_user(
-			sessid		text,
-			username	text,
-			passwd		text,
-			useremail		text)
-		returns uuid as $$
-			declare
-				link_holder	uuid;
-				new_uid		uuid;
-				name_holder	text;
-			begin
-				if length(passwd) < 5 then
-					raise 'new row for relation "user" violates check constraint "passwd_len"' 
-						using errcode = 'check_violation';
-				end if;
-				loop
-					select public.uuid_generate_v4() into new_uid;
-					select name into name_holder 
-						from users.user
-						where id = new_uid;
-					exit when not found;
-				end loop;
-				insert into users.user (id, name, password, email) 
-					values (new_uid, username, 
-						public.crypt(passwd, 
-							public.gen_salt('bf')), 
-						useremail);
-				select public.uuid_generate_v5(
-					public.uuid_ns_x500(),
-					lower(username)) into link_holder;
-				insert into users.validate (link, user_id) values
-					(link_holder, new_uid);
-				return link_holder;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.add_user.';
 		
 		create or replace function users.validate_user(
 			sessid		text,
@@ -2613,11 +2679,6 @@ returns setof text as $func$
 			users.protect_special_groups(),
 			users.update_special_groups(),
 			users.protect_group_link(),
-			users.add_user(
-				sessid		text,
-				username	text,
-				passwd		text,
-				useremail		text),
 			users.validate_user(
 				sessid		text,
 				linkcode		uuid),

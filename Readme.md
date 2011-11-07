@@ -43,39 +43,7 @@ releasing the information outside of the database.
 		<td>Change User Email</td>
 	</tr>
 	<tr>
-		<td>Admin Changes User Name</td>
-	</tr>
-	<tr>
-		<td>Admin Changes User Password</td>
-	</tr>
-	<tr> 
-		<td>Admin Changes User Email</td>
-	</tr>
-	<tr>
 		<td>User name and password retrieval</td>
-	</tr>
-	<tr>
-		<td>Add Group</td>
-		<td>done</td>
-	</tr>
-	<tr>
-		<td>Delete Group</td>
-		<td>done</td>
-	</tr>
-	<tr>
-		<td>Change Group Name</td>
-	</tr>
-	<tr>
-		<td>Assign Users to Groups</td>
-	</tr>
-	<tr>
-		<td>Assign Groups to Groups</td>
-	</tr>
-	<tr>
-		<td>Allow Users to Accept or Decline Joining a Group</td>
-	</tr>
-	<tr>
-		<td>Control Permissions</td>
 	</tr>
 </table>
 
