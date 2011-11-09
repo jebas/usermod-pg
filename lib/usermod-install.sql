@@ -572,6 +572,88 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_removeunvalidated_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'delete_unvalidated',
+			'trigger',
+			'There needs to be a function that removes unvalidated users.');
+		return next is_definer('users', 'delete_unvalidated', 
+			'Remove unvalidated user needs to have security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_trigger_removeunvalidated_exists()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'user', 'delete_unvalidated',
+			'users', 'delete_unvalidated',
+			'There needs to be a remove unvalidated trigger.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
+returns setof text as $test$
+	declare
+		inactiveusercur		refcursor;
+		user1				text;
+		email1				text;
+	begin
+		select into inactiveusercur inactive_test_users();
+		fetch from inactiveusercur into user1, email1;
+		update users.validate set expire = now() - interval '1 day'
+			where user_id = (select id from users.user 
+				where name = user1);
+		update users.user set password = 'password'
+			where name = user1;
+		return next is_empty(
+			$$select * from users.user 
+				where name = '$$ || user1 || $$'$$,
+			'Need to remove unvalidated users if they have expired.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_protect_anonymous()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'protect_anonymous',
+			'trigger', 
+			'There needs to be a function to protect anonymous');
+		return next is_definer('users', 'protect_anonymous',
+			'Needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_anonymous_trigger()
+returns setof text as $test$
+	begin
+		return next trigger_is('users', 'user', 'protect_anonymous',
+			'users', 'protect_anonymous',
+			'Needs a trigger to protect the anonymous user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_anonymous_cant_be_changed()
+returns setof text as $test$
+	begin 
+		return next throws_ok(
+			$$update users.user set password = 'wrong'
+				where name = 'anonymous'$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous user cannot be changed.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_user_anonymous_cant_be_deleted()
+returns setof text as $test$
+	begin 
+		return next throws_ok(
+			$$delete from users.user where name = 'anonymous'$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous user cannot be changed.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -785,6 +867,9 @@ returns setof text as $func$
 			return next 'Created the validation expiration index.';
 		end if;
 		
+		drop trigger if exists delete_unvalidated on users.user;
+		drop trigger if exists protect_anonymous on users.user;
+		
 		create or replace function users.add_user(
 			username	text,
 			passwd		text,
@@ -848,13 +933,56 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.validate_user.';
 
+		create or replace function users.delete_unvalidated()
+		returns trigger as $$
+			begin
+				delete from users.user 
+					where id = (select user_id from users.validate
+						where expire < now());
+				return null;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_unvalidated.';
+				
+		create or replace function users.protect_anonymous()
+		returns trigger as $$
+			begin
+				if OLD.name = 'anonymous' then 
+					raise 'Anonymous cannot be changed.';
+				end if;
+				if TG_OP = 'UPDATE' then
+					return NEW;
+				end if;
+				if TG_OP = 'DELETE' then
+					return OLD;
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.protect_anonymous.';
+
+		create trigger delete_unvalidated
+			after update
+			on users.user
+			execute procedure users.delete_unvalidated();
+		return next 'Created the remove unvalidated trigger.';
+
+		create trigger protect_anonymous
+			before update or delete
+			on users.user
+			for each row execute procedure users.protect_anonymous();
+		return next 'Created the protect anonymous trigger.';
+
 		revoke all on function 
 			users.add_user(
 				username	text,
 				passwd		text,
 				useremail	text),
 			users.validate_user(
-				linkcode	uuid)
+				linkcode	uuid),
+			users.delete_unvalidated(),
+			users.protect_anonymous()
 		from public;
 		
 		grant execute on function 
@@ -928,99 +1056,13 @@ $$ language plpgsql;
 
 
 
-create or replace function test_users_function_protect_anonymous()
-returns setof text as $test$
-	begin 
-		return next function_returns('users', 'protect_anonymous',
-			'trigger', 
-			'There needs to be a function to protect anonymous');
-		return next is_definer('users', 'protect_anonymous',
-			'Needs to securite definer access.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_user_anonymous_trigger()
-returns setof text as $test$
-	begin
-		return next trigger_is('users', 'user', 'protect_anonymous',
-			'users', 'protect_anonymous',
-			'Needs a trigger to protect the anonymous user.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_user_anonymous_cant_be_changed()
-returns setof text as $test$
-	begin 
-		return next throws_ok(
-			$$update users.user set password = 'wrong'
-				where name = 'anonymous'$$,
-			'P0001', 'Anonymous cannot be changed.',
-			'The Anonymous user cannot be changed.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_user_anonymous_cant_be_deleted()
-returns setof text as $test$
-	begin 
-		return next throws_ok(
-			$$delete from users.user where name = 'anonymous'$$,
-			'P0001', 'Anonymous cannot be changed.',
-			'The Anonymous user cannot be changed.');
-	end;
-$test$ language plpgsql;
 
 
 
 
 
 
-create or replace function test_users_function_removeunvalidated_exists()
-returns setof text as $test$
-	begin
-		return next function_returns('users', 'delete_unvalidated',
-			'trigger',
-			'There needs to be a function that removes unvalidated users.');
-		return next is_definer('users', 'delete_unvalidated', 
-			'Remove unvalidated user needs to have security definer access.');
-	end;
-$test$ language plpgsql;
 
-create or replace function test_users_trigger_removeunvalidated_exists()
-returns setof text as $test$
-	begin
-		return next trigger_is('users', 'user', 'delete_unvalidated',
-			'users', 'delete_unvalidated',
-			'There needs to be a remove unvalidated trigger.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
-returns setof text as $test$
-	declare
-		newusercur		refcursor;
-		activeusercur		refcursor;
-		newuser			text;
-		activeuser		text;
-		newuserlink		uuid;
-	begin 
-		select new_test_users() into newusercur;
-		select active_test_users() into activeusercur;
-		fetch from newusercur into newuser;
-		fetch from activeusercur into activeuser;
-		select add_user into newuserlink from
-			users.add_user('web-session-1', newuser, 'password',
-				newuser);
-		update users.validate set expire = now() - interval '1 day' 
-			where link = newuserlink;
-		update users.user set password =
-			public.crypt('password', public.gen_salt('bf'))
-			where name = lower(activeuser);
-		return next is_empty(
-			$$select * from users.user where 
-				name = lower('$$ || newuser || $$')$$,
-			'Unvalidated users should expire after a time.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_deleteuser_exists()
 returns setof text as $test$
@@ -2315,28 +2357,10 @@ returns setof text as $func$
 		end if;
 		*/
 /*		
-		drop trigger if exists protect_anonymous on users.user;
-		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists update_special_groups on users.user;
 		drop trigger if exists protect_special_groups on users.group;
 		drop trigger if exists protect_group_link on users.group_user_link;
 		
-		create or replace function users.protect_anonymous()
-		returns trigger as $$
-			begin
-				if OLD.name = 'anonymous' then 
-					raise 'Anonymous cannot be changed.';
-				end if;
-				if TG_OP = 'UPDATE' then
-					return NEW;
-				end if;
-				if TG_OP = 'DELETE' then
-					return OLD;
-				end if;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.protect_anonymous.';
 		
 		create or replace function users.protect_special_groups()
 		returns trigger as $$
@@ -2431,17 +2455,6 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.update_special_groups.';
 
-		create or replace function users.delete_unvalidated()
-		returns trigger as $$
-			begin
-				delete from users.user 
-					where id = (select user_id from users.validate
-						where expire < now());
-				return null;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.delete_unvalidated.';
 
 		
 		
@@ -2640,17 +2653,7 @@ returns setof text as $func$
 		return next 'Created function to let users join a group.';
 		*/
 /*		
-		create trigger protect_anonymous
-			before update or delete
-			on users.user
-			for each row execute procedure users.protect_anonymous();
-		return next 'Created the protect anonymous trigger.';
 
-		create trigger delete_unvalidated
-			after update
-			on users.user
-			execute procedure users.delete_unvalidated();
-		return next 'Created the remove unvalidated trigger.';
 
 		create trigger update_special_groups
 			after update

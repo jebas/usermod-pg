@@ -19,6 +19,7 @@ releasing the information outside of the database.
 	</tr>
 	<tr>
 		<td>Validate User</td>
+		<td>done</td>
 	</tr>
 	<tr>
 		<td>Delete User</td>
