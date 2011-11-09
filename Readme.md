@@ -19,19 +19,15 @@ releasing the information outside of the database.
 	</tr>
 	<tr>
 		<td>Validate User</td>
-		<td>done</td>
 	</tr>
 	<tr>
 		<td>Delete User</td>
-		<td>done</td>
 	</tr>
 	<tr>
 		<td>Login</td>
-		<td>done</td>
 	</tr>
 	<tr>
 		<td>Logout</td>
-		<td>done</td>
 	</tr>
 	<tr>
 		<td>Change User Name</td>

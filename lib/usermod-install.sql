@@ -3,42 +3,36 @@ create or replace function startup_20_users()
 returns setof text as $test$
 	declare
 		nameholder	text;
-		idholder	uuid;
-		foundid		uuid;
+		emailholder	text;
 		foundname	text;
+		foundid		uuid;
+		thelink		uuid;
 	begin
-		--delete from users.test_user;
 		perform public.shutdown_20_users();
 		loop
 			select md5(random()::text) into nameholder;
+			select md5(random()::text) into emailholder;
 			select name into foundname 
 				from users.test_user
 				where name = nameholder;
 			if found then
 				continue;
 			end if;
-			select uuid_generate_v4() into idholder;
 			select id into foundid 
 				from users.user
 				where name = lower(nameholder)
-					or email = lower(nameholder)
-					or id = idholder;
+					or email = lower(nameholder);
 			if found then
 				continue;
 			end if;
-			insert into users.test_user (name) 
-				values (nameholder);
+			insert into users.test_user (name, email) 
+				values (nameholder, emailholder);
 			if (select count(*) > 5 from users.test_user) then
-				-- Create inactive users for testing.  
-				insert into users.user (id, name, password, email)
-					values (idholder, nameholder,
-					public.crypt('password', public.gen_salt('bf')),
-					nameholder);
+				select into thelink validlink from 
+					users.add_user(nameholder, nameholder, emailholder);
 			end if;
 			if (select count(*) > 10 from users.test_user) then
-				-- Make active users for testing.
-				update users.user set active = true 
-					where id = idholder;
+				perform users.validate_user(thelink);
 			end if;
 			exit when (select count(*) > 14 from users.test_user);
 		end loop;
@@ -72,7 +66,8 @@ returns refcursor as $$
 		refcur	refcursor;
 	begin
 		open refcur for 
-			select users.test_user.name
+			select users.test_user.name,
+				users.test_user.email
 			from users.test_user
 			left outer join users.user on 
 				(lower(users.test_user.name) = 
@@ -179,6 +174,22 @@ returns setof text as $test$
 			'Name should be primary key for test users.');
 	end;
 $test$ language plpgsql;
+
+create or replace function test_users_table_testusers_column_email_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'test_user', 'email',
+			'Needs a user email column in test users.');
+	end;
+$test$ language plpgsql;  
+
+create or replace function test_users_table_testuser_column_email_is_text()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'test_user', 'email', 'text',
+			'The test user email needs to be text.');
+	end;
+$test$ language plpgsql;  
 
 create or replace function test_users_table_user_column_id_exists()
 returns setof text as $$
@@ -469,46 +480,33 @@ returns setof text as $test$
 	declare
 		newusercur		refcursor;
 		user1			text;
+		email1			text;
 		theemail		text;
 		thelink			uuid;
 	begin
 		select into newusercur new_test_users();
-		fetch from newusercur into user1;
+		fetch from newusercur into user1, email1;
 		select into theemail, thelink emailaddr, validlink
-			from users.add_user(user1, 'password', user1);
-		return next is(theemail, user1,
+			from users.add_user(user1, user1, email1);
+		return next is(theemail, email1,
 			'User add needs to return the user''s email address.');
 		return next results_eq(
 			$$select active, name, email from users.user 
 				where name = '$$ || user1 || $$'$$,
 			$$values (false, '$$ || user1 || $$', 
-				'$$ || user1 || $$')$$,
+				'$$ || email1 || $$')$$,
 			'add_user needs to add the user to users.user.');
-	end;
-$test$ language plpgsql;
-/*
-create or replace function test_users_function_add_user_inserts_data()
-returns setof text as $test$
-	declare
-		newusercur		refcursor;
-		user1			text;
-		holder			text;
-	begin
-		select new_test_users() into newusercur;
-		fetch from newusercur into user1;
-		select add_user into holder from
-			users.add_user(user1, 'password', user1);
 		return next results_ne(
 			$$select password from users.user
 				where name = '$$ || user1 || $$'$$,
-			$$values ('password')$$,
+			$$values ('$$ || user1 || $$')$$,
 			'User''s password needs to be encrypted.');
 		return next results_eq(
-			$$select cast(users.validate.link as text)
+			$$select users.validate.link
 				from users.validate, users.user
 				where users.user.id = users.validate.user_id
 					and users.user.name = '$$ || user1 || $$'$$,
-			array[holder],
+			$$values (cast('$$ || thelink || $$' as uuid))$$,
 			'User add must output the validation link');
 	end;
 $test$ language plpgsql;
@@ -518,19 +516,61 @@ returns setof text as $test$
 	declare
 		newusercur		refcursor;
 		user1			text;
+		email1			text;
 	begin
 		select new_test_users() into newusercur;
-		fetch from newusercur into user1;
+		fetch from newusercur into user1, email1;
 		return next throws_ok(
 			$$select users.add_user( 
 				'$$ || user1 || $$',
-				'four', '$$ || user1 || $$')$$,
+				'four', '$$ || email1 || $$')$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "passwd_len"',
 			'User password must be a minimum of 5 characters.');
 	end;
 $test$ language plpgsql;
-*/
+
+create or replace function test_users_function_validate_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'validate_user',
+			array['uuid'], 'text',
+			'There needs to be a function that validates new users.');
+		return next is_definer('users', 'validate_user', 
+			array['uuid'], 
+			'Validate user needs to have security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validate_activates_user()
+returns setof text as $test$
+	declare
+		inactiveusercur		refcursor;
+		user1				text;
+		thelink				uuid;
+		validateduser		text;
+	begin
+		select into inactiveusercur inactive_test_users();
+		fetch from inactiveusercur into user1;
+		select into thelink users.validate.link 
+			from users.validate,
+				users.user
+			where users.user.id = users.validate.user_id
+				and users.user.name = user1;
+		select into validateduser username from users.validate_user(thelink);
+		return next is(validateduser, user1,
+			'Validation function needs to return the user name.');
+		return next results_eq(
+			$$select active from users.user
+				where name = '$$ || user1 || $$'$$,
+			'values (true)',
+			'Validate must make the user active.');
+		return next is_empty(
+			$$select * from users.validate
+				where link = '$$ || thelink || $$'$$,
+				'Validate must remove the validation link information.');
+	end;
+$test$ language plpgsql;
 
 create or replace function correct_users()
 returns setof text as $func$
@@ -558,6 +598,16 @@ returns setof text as $func$
 			alter table users.test_user
 				add primary key (name);
 			return next 'Added the primary key to test users.';
+		end if;  
+		if failed_test('test_users_table_testusers_column_email_exists') then
+			alter table users.test_user
+				add column email text;
+			return next 'Added the user email column to test users.';
+		end if;
+		if failed_test('test_users_table_testuser_column_email_is_text') then
+			alter table users.test_user
+				alter column email type text;
+			return next 'Altered test user email to text.';
 		end if;  
 
 		if failed_test('test_users_user_exists') then
@@ -743,38 +793,9 @@ returns setof text as $func$
 			out		validlink		uuid)
 		as $$
 			declare
-				name_holder	text;
+				id_holder	uuid;
 				new_uid		uuid;
-			begin
-				loop
-					select public.uuid_generate_v4() into new_uid;
-					select name into name_holder 
-						from users.user
-						where id = new_uid;
-					exit when not found;
-				end loop;
-				insert into users.user (id, name, password, email) 
-					values (new_uid, username, 
-						public.crypt(passwd, 
-							public.gen_salt('bf')), 
-						useremail);
-				emailaddr := useremail;
-				validlink := public.uuid_nil();
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.add_user.';
-
-		/*
-		create or replace function users.add_user(
-			username	text,
-			passwd		text,
-			useremail	text)
-		returns uuid as $$
-			declare
-				link_holder	uuid;
-				new_uid		uuid;
-				name_holder	text;
+				new_lid		uuid;
 			begin
 				if length(passwd) < 5 then
 					raise 'new row for relation "user" violates check constraint "passwd_len"' 
@@ -782,7 +803,7 @@ returns setof text as $func$
 				end if;
 				loop
 					select public.uuid_generate_v4() into new_uid;
-					select name into name_holder 
+					select id into id_holder 
 						from users.user
 						where id = new_uid;
 					exit when not found;
@@ -792,30 +813,57 @@ returns setof text as $func$
 						public.crypt(passwd, 
 							public.gen_salt('bf')), 
 						useremail);
-				select public.uuid_generate_v5(
-					public.uuid_ns_x500(),
-					lower(username)) into link_holder;
+				loop
+					select public.uuid_generate_v4() into new_lid;
+					select link into id_holder 
+						from users.validate
+						where link = new_lid;
+					exit when not found;
+				end loop;
 				insert into users.validate (link, user_id) values
-					(link_holder, new_uid);
-				return link_holder;
+					(new_lid, new_uid);
+				emailaddr := useremail;
+				validlink := new_lid;
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.add_user.';
-		*/
 		
+		create or replace function users.validate_user(
+			linkcode				uuid,
+			out		username		text)
+		as $$
+			begin
+				select into username users.user.name 
+					from users.user,
+						users.validate
+					where users.user.id = users.validate.user_id
+						and users.validate.link = linkcode;
+				update users.user set active = true
+					where name = lower(username);
+				delete from users.validate 
+					where link = linkcode;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.validate_user.';
+
 		revoke all on function 
 			users.add_user(
 				username	text,
 				passwd		text,
-				useremail	text)
+				useremail	text),
+			users.validate_user(
+				linkcode	uuid)
 		from public;
 		
 		grant execute on function 
 			users.add_user(
 				username	text,
 				passwd		text,
-				useremail	text)
+				useremail	text),
+			users.validate_user(
+				linkcode	uuid)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
@@ -924,43 +972,7 @@ $test$ language plpgsql;
 
 
 
-create or replace function test_users_function_validate_exists()
-returns setof text as $test$
-	begin
-		return next function_returns('users', 'validate_user',
-			array['text', 'uuid'], 'void',
-			'There needs to be a function that validates new users.');
-		return next is_definer('users', 'validate_user', 
-			array['text', 'uuid'], 
-			'Validate user needs to have security definer access.');
-	end;
-$test$ language plpgsql;
 
-create or replace function test_users_function_validate_activates_user()
-returns setof text as $test$
-	declare
-		newusercur	refcursor;
-		user1		text;
-		holder		uuid;
-	begin
-		select new_test_users() into newusercur;
-		fetch from newusercur into user1;
-		select add_user into holder from
-			users.add_user('web-session-1', user1, 'password',
-				user1);
-		perform users.validate_user('web-session-1', holder);
-		return next results_eq(
-			$$select active from users.user 
-				where name = '$$ || user1 || $$'$$,
-			array[true],
-			'Validate user should make the user active.');
-		return next is_empty(
-			$$select * from users.validate, users.user
-				where users.user.id = users.validate.user_id
-				and users.user.name = '$$ || user1 || $$'$$,
-			'Validate needs to delete the validation link.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_removeunvalidated_exists()
 returns setof text as $test$
@@ -2432,21 +2444,6 @@ returns setof text as $func$
 		return next 'Created function users.delete_unvalidated.';
 
 		
-		create or replace function users.validate_user(
-			sessid		text,
-			linkcode		uuid)
-		returns void as $$
-			begin
-				update users.user set active = true 
-					where id = (select user_id 
-						from users.validate 
-						where link = linkcode);
-				delete from users.validate
-					where link = linkcode;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.validate_user.';
 		
 		create or replace function users.delete_user(
 			sessid		text,
