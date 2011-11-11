@@ -60,6 +60,27 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function setup_20_users()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+		user2				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1;
+		fetch from loggedoutcur into user2;
+		perform users.login('web-session-3', user1, user1);
+		perform users.login('web-session-4', user2, user2);
+	exception
+		when invalid_schema_name 
+			or undefined_function 
+			or undefined_table 
+			or undefined_column then
+			--do nothing
+	end; 
+$test$ language plpgsql;
+
 create or replace function new_test_users()
 returns refcursor as $$
 	declare 
@@ -122,6 +143,23 @@ returns refcursor as $$
 			where users.user.name = users.test_user.name
 				and users.user.active = true
 				and web.session.sess_id is null;
+		return refcur;
+	end;
+$$ language plpgsql;
+
+create or replace function logged_in_test_users()
+returns refcursor as $$
+	declare
+		refcur refcursor;
+	begin
+		open refcur for
+			select users.test_user.name, 
+				web.session.sess_id
+			from users.test_user,
+				users.user,
+				web.session
+			where users.user.name = lower(users.test_user.name)
+				and users.user.id = web.session.user_id;
 		return refcur;
 	end;
 $$ language plpgsql;
@@ -796,6 +834,36 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_logout_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'logout',
+			array['text'], 'void', 
+			'There needs to be a function to log out.');
+		return next is_definer('users', 'logout', 
+			array['text'], 
+			'Logout needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_logout_returns_to_anonymous()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		user1			text;
+		session1		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		fetch from loggedincur into user1, session1;
+		perform users.logout(session1);
+		return next results_eq(
+			$$select user_id from web.session 
+				where sess_id = '$$ || session1 || $$'$$,
+			$$values (public.uuid_nil())$$,
+			'Logout should reset session to anonymous');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1153,6 +1221,18 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.login.';
 
+		create or replace function users.logout(
+			sessid		text)
+		returns void as $$
+			begin
+				update web.session
+					set user_id = public.uuid_nil()
+					where sess_id = sessid;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.logout.';
+
 		create trigger delete_unvalidated
 			after update
 			on users.user
@@ -1177,7 +1257,9 @@ returns setof text as $func$
 			users.login(
 				sessionid	text,
 				username	text,
-				passwd		text)
+				passwd		text),
+			users.logout(
+				sessid		text)
 		from public;
 		
 		grant execute on function 
@@ -1190,7 +1272,9 @@ returns setof text as $func$
 			users.login(
 				sessionid	text,
 				username	text,
-				passwd		text)
+				passwd		text),
+			users.logout(
+				sessid		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
@@ -1203,43 +1287,9 @@ $func$ language plpgsql;
 -- This setup needs to run after webs setup.
 /*
 
-create or replace function setup_20_users()
-returns setof text as $test$
-	begin
-		update web.session 
-			set user_id = 
-				(select 
-					users.group_user_link.user_id 
-				from users.group,
-					users.group_user_link
-				where 
-					users.group.id = users.group_user_link.group_id
-					and users.group.name = 'admin'
-				limit 1)
-			where web.session.sess_id = 'web-session-1';
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
-	end; 
-$test$ language plpgsql;
 
 		
 
-create or replace function anonymous_sessions()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select sess_id 
-			from web.session
-			where user_id = public.uuid_nil();
-		return refcur;
-	end;
-$$ language plpgsql;
 		
 
 
@@ -1703,29 +1753,6 @@ $test$ language plpgsql;
 
 
 
-create or replace function test_users_function_logout_exists()
-returns setof text as $test$
-	begin 
-		return next function_returns('users', 'logout',
-			array['text'], 'void', 
-			'There needs to be a function to log out.');
-		return next is_definer('users', 'logout', 
-			array['text'], 
-			'Logout needs to securite definer access.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_logout_returns_to_anonymous()
-returns setof text as $test$
-	begin 
-		perform users.logout('web-session-1');
-		return next results_eq(
-			$$select web.session.user_id from web.session 
-				where sess_id = 'web-session-1'$$,
-			array[uuid_nil()],
-			'Logout must return the session to anonymous');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_updatespecialgroups_exists()
 returns setof text as $test$
@@ -2550,17 +2577,6 @@ returns setof text as $func$
 		return next 'Created function users.delete_group.';
 		
 		
-		create or replace function users.logout(
-			sessid		text)
-		returns void as $$
-			begin
-				update web.session
-					set user_id = public.uuid_nil()
-					where sess_id = sessid;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.logout.';
 		
 		create or replace function users.group_user_add(
 			sessid		text,
