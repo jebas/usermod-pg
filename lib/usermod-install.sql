@@ -107,7 +107,24 @@ returns refcursor as $$
 			where users.user.active = true;
 		return refcur;
 	end;
-$$ language plpgsql;  
+$$ language plpgsql;
+
+create or replace function logged_out_test_users()
+returns refcursor as $$
+	declare
+		refcur	refcursor;
+	begin
+		open refcur for
+			select users.test_user.name
+			from (users.user left outer join web.session on 
+				(users.user.id = web.session.user_id)),
+				users.test_user
+			where users.user.name = users.test_user.name
+				and users.user.active = true
+				and web.session.sess_id is null;
+		return refcur;
+	end;
+$$ language plpgsql;
 
 create or replace function test_users_schema()
 returns setof text as $$
@@ -654,6 +671,131 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_web_table_session_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('web', 'session', 'user_id',
+			'Web sessions needs an attached user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('web', 'session', 'user_id', 'uuid',
+			'Web session user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_default()
+returns setof text as $test$
+	begin 
+		return next col_default_is('web', 'session', 'user_id', 
+			'uuid_nil()', 
+			'The default user for a new session is anonymous.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_is_fk()
+returns setof text as $test$
+	begin 
+		return next fk_ok('web', 'session', 'user_id',
+			'users', 'user', 'id',
+			'Sessions need to be linked to users.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_column_userid_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('web', 'session', 'user_id',
+			'Session''s user id cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'login',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a function to log in.');
+		return next is_definer('users', 'login', 
+			array['text', 'text', 'text'], 
+			'Login needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_changes_session_owner()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1;
+		perform users.login('web-session-1', user1, user1);
+		return next results_eq(
+			$$select users.user.name 
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = 'web-session-1'$$,
+			$$values ('$$ || user1 || $$')$$,
+			'Login should update the session to the user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_username_case_insensitive()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1;
+		perform users.login('web-session-1', upper(user1), user1);
+		return next results_eq(
+			$$select users.user.name 
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = 'web-session-1'$$,
+			$$values ('$$ || user1 || $$')$$,
+			'Login should update the session to the user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_fails_for_incorrect_values()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1;
+		return next throws_ok(
+			$$select users.login('web-session-1', '$$ || user1 || $$', 'wrong')$$,
+			'23502', 'null value in column "user_id" violates not-null constraint',
+			'Failed login needs to throw an error.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_username_only_active()
+returns setof text as $test$
+	declare
+		inactiveusercur		refcursor;
+		user1				text;
+	begin
+		select into inactiveusercur inactive_test_users();
+		fetch from inactiveusercur into user1;
+		return next throws_ok(
+			$$select users.login('web-session-1', '$$ || user1 || $$',
+				'$$ || user1 || $$')$$,
+			'23502', 'null value in column "user_id" violates not-null constraint',
+			'Failed login needs to throw an error.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -867,6 +1009,37 @@ returns setof text as $func$
 			return next 'Created the validation expiration index.';
 		end if;
 		
+		if failed_test('test_web_table_session_column_userid_exists') then
+			alter table web.session
+				add column user_id uuid default uuid_nil();
+			return next 'Added user ids to web sessions.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_is_uuid') then
+			alter table web.session
+				alter column user_id type uuid;
+			return next 'Set web session user id to uuid.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_default') then
+			alter table web.session
+				alter column user_id set default uuid_nil();
+			return next 'Set the default for the session user id.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_is_fk') then
+			alter table web.session
+				add constraint sess_usrid 
+				foreign key (user_id) 
+				references users.user (id)
+				match full
+				on delete cascade
+				on update cascade;
+			return next 'Linked the session id to the users.';
+		end if;
+		if failed_test('test_web_table_session_column_userid_not_null') then
+			alter table web.session
+				alter column user_id set not null;
+			return next 'Made web.session.user_id not null.';
+		end if;
+		
 		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists protect_anonymous on users.user;
 		
@@ -962,6 +1135,24 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.protect_anonymous.';
 
+		create or replace function users.login(
+			sessionid		text,
+			username		text,
+			passwd			text)
+		returns void as $$
+			begin
+				update web.session 
+					set user_id = (select id 
+						from users.user 
+						where name = lower(username)
+							and active = true
+							and password = public.crypt(passwd, password))
+					where sess_id = sessionid;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.login.';
+
 		create trigger delete_unvalidated
 			after update
 			on users.user
@@ -982,7 +1173,11 @@ returns setof text as $func$
 			users.validate_user(
 				linkcode	uuid),
 			users.delete_unvalidated(),
-			users.protect_anonymous()
+			users.protect_anonymous(),
+			users.login(
+				sessionid	text,
+				username	text,
+				passwd		text)
 		from public;
 		
 		grant execute on function 
@@ -991,7 +1186,11 @@ returns setof text as $func$
 				passwd		text,
 				useremail	text),
 			users.validate_user(
-				linkcode	uuid)
+				linkcode	uuid),
+			users.login(
+				sessionid	text,
+				username	text,
+				passwd		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
@@ -1502,137 +1701,7 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
-create or replace function test_web_table_session_column_userid_exists()
-returns setof text as $test$
-	begin
-		return next has_column('web', 'session', 'user_id',
-			'Web sessions needs an attached user.');
-	end;
-$test$ language plpgsql;
 
-create or replace function test_web_table_session_column_userid_is_uuid()
-returns setof text as $test$
-	begin 
-		return next col_type_is('web', 'session', 'user_id', 'uuid',
-			'Web session user id needs to be uuid.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_web_table_session_column_userid_default()
-returns setof text as $test$
-	begin 
-		return next col_default_is('web', 'session', 'user_id', 
-			'uuid_nil()', 
-			'The default user for a new session is anonymous.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_web_table_session_column_userid_is_fk()
-returns setof text as $test$
-	begin 
-		return next fk_ok('web', 'session', 'user_id',
-			'users', 'user', 'id',
-			'Sessions need to be linked to users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_login_exists()
-returns setof text as $test$
-	begin 
-		return next function_returns('users', 'login',
-			array['text', 'text', 'text'], 'void', 
-			'There needs to be a function to log in.');
-		return next is_definer('users', 'login', 
-			array['text', 'text', 'text'], 
-			'Login needs to securite definer access.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_login_changes_session_owner()
-returns setof text as $test$
-	declare
-		activeusercur		refcursor;
-		sessioncur		refcursor;
-		activeuser		text;
-		sessionid			text;
-	begin 
-		select active_test_users() into activeusercur;
-		select anonymous_sessions() into sessioncur;
-		fetch from activeusercur into activeuser;
-		fetch from sessioncur into sessionid;
-		perform users.login(sessionid, activeuser,
-			'password');
-		return next results_eq(
-			$$select user_id from web.session 
-				where sess_id = '$$ || sessionid || $$'$$,
-			$$select id from users.user 
-				where name = lower('$$ || activeuser || $$')$$,
-			'Login should assign the user to the session.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_login_username_case_insensitive()
-returns setof text as $test$
-	declare
-		activeusercur		refcursor;
-		sessioncur		refcursor;
-		activeuser		text;
-		sessionid			text;
-	begin 
-		select active_test_users() into activeusercur;
-		select anonymous_sessions() into sessioncur;
-		fetch from activeusercur into activeuser;
-		fetch from sessioncur into sessionid;
-		perform users.login(sessionid, upper(activeuser),
-			'password');
-		return next results_eq(
-			$$select user_id from web.session 
-				where sess_id = '$$ || sessionid || $$'$$,
-			$$select id from users.user 
-				where name = lower('$$ || activeuser || $$')$$,
-			'Login should assign the user to the session.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_login_fails_for_incorrect_values()
-returns setof text as $test$
-	declare
-		activeusercur		refcursor;
-		sessioncur		refcursor;
-		activeuser		text;
-		sessionid			text;
-	begin 
-		select active_test_users() into activeusercur;
-		select anonymous_sessions() into sessioncur;
-		fetch from activeusercur into activeuser;
-		fetch from sessioncur into sessionid;
-		return next throws_ok(
-			$$select users.login('$$ || sessionid || $$', 
-				'$$ || activeuser || $$', 'wrong')$$, 
-			'P0001', 'Incorrect user name or password.',
-			'Login needs to throw an error on failure.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_login_username_only_active()
-returns setof text as $test$
-	declare
-		inactiveusercur	refcursor;
-		sessioncur		refcursor;
-		inactiveuser		text;
-		sessionid			text;
-	begin 
-		select inactive_test_users() into inactiveusercur;
-		select anonymous_sessions() into sessioncur;
-		fetch from inactiveusercur into inactiveuser;
-		fetch from sessioncur into sessionid;
-		return next throws_ok(
-			$$select users.login('$$ || sessionid || $$', 
-				'$$ || inactiveuser || $$', 'password')$$, 
-			'P0001', 'Incorrect user name or password.',
-			'Login needs to throw an error for inactive users.');
-	end;
-$test$ language plpgsql;
 
 create or replace function test_users_function_logout_exists()
 returns setof text as $test$
@@ -2232,31 +2301,6 @@ returns setof text as $func$
 			return next 'Created an admin user.';
 		end if;
 		
-		if failed_test('test_web_table_session_column_userid_exists') then
-			alter table web.session
-				add column user_id uuid default uuid_nil();
-			return next 'Added user ids to web sessions.';
-		end if;
-		if failed_test('test_web_table_session_column_userid_is_uuid') then
-			alter table web.session
-				alter column user_id type uuid;
-			return next 'Set web session user id to uuid.';
-		end if;
-		if failed_test('test_web_table_session_column_userid_default') then
-			alter table web.session
-				alter column user_id set default uuid_nil();
-			return next 'Set the default for the session user id.';
-		end if;
-		if failed_test('test_web_table_session_column_userid_is_fk') then
-			alter table web.session
-				add constraint sess_usrid 
-				foreign key (user_id) 
-				references users.user (id)
-				match full
-				on delete cascade
-				on update cascade;
-			return next 'Linked the session id to the users.';
-		end if;
 */		
 		/*
 		if failed_test('test_users_table_groupinvite_exists') then
@@ -2505,31 +2549,6 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.delete_group.';
 		
-		create or replace function users.login(
-			sessid		text,
-			username	text,
-			passwd		text)
-		returns void as $$
-			declare
-				userid		uuid;
-			begin
-				select id into userid
-					from users.user
-					where name = lower(username)
-						and active = true
-						and password = public.crypt(passwd,
-							password);
-				if found then
-					update web.session
-						set user_id = userid
-						where sess_id = sessid;
-				else
-					raise 'Incorrect user name or password.';
-				end if;
-			end;
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.login.';
 		
 		create or replace function users.logout(
 			sessid		text)

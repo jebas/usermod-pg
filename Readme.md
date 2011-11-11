@@ -22,10 +22,8 @@ releasing the information outside of the database.
 		<td>done</td>
 	</tr>
 	<tr>
-		<td>Delete User</td>
-	</tr>
-	<tr>
 		<td>Login</td>
+		<td>done</td>
 	</tr>
 	<tr>
 		<td>Logout</td>
