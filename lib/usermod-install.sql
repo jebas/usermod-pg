@@ -864,6 +864,66 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_changename_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_name',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a function to change user name.');
+		return next is_definer('users', 'change_name', 
+			array['text', 'text', 'text'], 
+			'Change user name needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changename_changes_name()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		newusercur		refcursor;
+		user1			text;
+		session1		text;
+		newname			text;
+		newemail		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		select into newusercur new_test_users();
+		fetch from loggedincur into user1, session1;
+		fetch from newusercur into newname, newemail;
+		perform users.change_name(session1, newname, user1);
+		return next results_eq(
+			$$select users.user.name
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = '$$ || session1 || $$'$$,
+			$$values ('$$ || newname || $$')$$,
+			'Change name needs to change the user''s name.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changename_fails_with_wrong_password()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		newusercur		refcursor;
+		user1			text;
+		session1		text;
+		newname			text;
+		newemail		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		select into newusercur new_test_users();
+		fetch from loggedincur into user1, session1;
+		fetch from newusercur into newname, newemail;
+		return next throws_ok(
+			$$select users.change_name('$$ || session1 || $$', 
+				'$$ || newname || $$', 'wrong')$$,
+			'P0001', 'Password was incorrect',
+			'Must use correct password to change name.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1232,6 +1292,24 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.logout.';
+		
+		create or replace function users.change_name(
+			sessionid	text,
+			username	text,
+			passwd		text)
+		returns void as $$
+			begin
+				update users.user set name = username
+					where id = (select user_id from web.session
+						where sess_id = sessionid)
+					and password = public.crypt(passwd, password);
+				if not found then
+					raise 'Password was incorrect';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_name.';
 
 		create trigger delete_unvalidated
 			after update
@@ -1259,7 +1337,11 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
+				sessid		text),
+			users.change_name(
+				sessionid	text,
+				newname		text,
+				passwd		text)
 		from public;
 		
 		grant execute on function 
@@ -1274,7 +1356,11 @@ returns setof text as $func$
 				username	text,
 				passwd		text),
 			users.logout(
-				sessid		text)
+				sessid		text),
+			users.change_name(
+				sessionid	text,
+				newname		text,
+				passwd		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
