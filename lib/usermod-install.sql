@@ -924,6 +924,74 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_changepassword_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_password',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a function to change user password.');
+		return next is_definer('users', 'change_password', 
+			array['text', 'text', 'text'], 
+			'Change user name needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_changes_password()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		user1			text;
+		session1		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		fetch from loggedincur into user1, session1;
+		perform users.change_password(session1, 'password', user1);
+		return next results_eq(
+			$$select users.user.password = public.crypt('password', users.user.password)
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = '$$ || session1 || $$'$$,
+			'values (true)',
+			'Change password should change password.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_fails_with_wrong_password()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		user1			text;
+		session1		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		fetch from loggedincur into user1, session1;
+		return next throws_ok(
+			$$select users.change_password('$$ || session1 || $$', 
+				'password', 'wrong')$$,
+			'P0001', 'Password was incorrect',
+			'Must use correct password to change name.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_fails_for_short_passwords()
+returns setof text as $test$
+	declare
+		loggedincur		refcursor;
+		user1			text;
+		session1		text;
+	begin 
+		select into loggedincur logged_in_test_users();
+		fetch from loggedincur into user1, session1;
+		return next throws_ok(
+			$$select users.change_password('$$ || session1 || $$', 
+				'four', '$$ || user1 || $$')$$,
+			'23514', 
+			'new row for relation "user" violates check constraint "passwd_len"',
+			'User password must be a minimum of 5 characters.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1171,6 +1239,18 @@ returns setof text as $func$
 		drop trigger if exists delete_unvalidated on users.user;
 		drop trigger if exists protect_anonymous on users.user;
 		
+		create or replace function users.check_password_length(
+			password	text)
+		returns void as $$
+			begin
+				if length(password) < 5 then
+					raise 'new row for relation "user" violates check constraint "passwd_len"' 
+						using errcode = 'check_violation';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		
 		create or replace function users.add_user(
 			username	text,
 			passwd		text,
@@ -1183,10 +1263,7 @@ returns setof text as $func$
 				new_uid		uuid;
 				new_lid		uuid;
 			begin
-				if length(passwd) < 5 then
-					raise 'new row for relation "user" violates check constraint "passwd_len"' 
-						using errcode = 'check_violation';
-				end if;
+				perform users.check_password_length(passwd);
 				loop
 					select public.uuid_generate_v4() into new_uid;
 					select id into id_holder 
@@ -1311,6 +1388,26 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_name.';
 
+		create or replace function users.change_password(
+			sessionid		text,
+			newpassword		text,
+			oldpassword		text)
+		returns void as $$
+			begin
+				perform users.check_password_length(newpassword);
+				update users.user 
+					set password = public.crypt(newpassword, public.gen_salt('bf'))
+				where id = (select user_id from web.session 
+					where sess_id = sessionid)
+					and password = public.crypt(oldpassword, password);
+				if not found then
+					raise 'Password was incorrect';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_password.';
+
 		create trigger delete_unvalidated
 			after update
 			on users.user
@@ -1324,43 +1421,53 @@ returns setof text as $func$
 		return next 'Created the protect anonymous trigger.';
 
 		revoke all on function 
+			users.check_password_length(
+				password	text),
 			users.add_user(
-				username	text,
-				passwd		text,
-				useremail	text),
+				username		text,
+				passwd			text,
+				useremail		text),
 			users.validate_user(
-				linkcode	uuid),
+				linkcode		uuid),
 			users.delete_unvalidated(),
 			users.protect_anonymous(),
 			users.login(
-				sessionid	text,
-				username	text,
-				passwd		text),
+				sessionid		text,
+				username		text,
+				passwd			text),
 			users.logout(
-				sessid		text),
+				sessid			text),
 			users.change_name(
-				sessionid	text,
-				newname		text,
-				passwd		text)
+				sessionid		text,
+				newname			text,
+				passwd			text),
+			users.change_password(
+				sessionid		text,
+				newpassword		text,
+				oldpassword		text)
 		from public;
 		
 		grant execute on function 
 			users.add_user(
-				username	text,
-				passwd		text,
-				useremail	text),
+				username		text,
+				passwd			text,
+				useremail		text),
 			users.validate_user(
-				linkcode	uuid),
+				linkcode		uuid),
 			users.login(
-				sessionid	text,
-				username	text,
-				passwd		text),
+				sessionid		text,
+				username		text,
+				passwd			text),
 			users.logout(
-				sessid		text),
+				sessid			text),
 			users.change_name(
-				sessionid	text,
-				newname		text,
-				passwd		text)
+				sessionid		text,
+				newname			text,
+				passwd			text),
+			users.change_password(
+				sessionid		text,
+				newpassword		text,
+				oldpassword		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
