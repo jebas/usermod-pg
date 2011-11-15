@@ -518,6 +518,88 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_validateemail_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'validate_email',
+			'Need a table for unvalidated email addresses.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_link_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate_email', 'link',
+			'Needs a validation link column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_link_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate_email', 'link', 'uuid',
+			'The validation link needs to be a uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'validate_email', 'user_id',
+			'Validate needs a link to the user table.');
+	end; 
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('users', 'validate_email', 'user_id', 'uuid',
+			'Validation user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_expire_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate_email', 'expire',
+			'Validate needs an expriration column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_expire_is_timestamp()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate_email', 'expire',
+			'timestamp with time zone',
+			'Needs to know when the unvalidated user expires.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_cloumn_expire_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'validate_email', 'expire',
+			'Validate expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_expire_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'validate_email', 'expire',
+			$$(now() + '7 days'::interval)$$,
+			'Validate expire needs to be set to the future.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_column_email_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate_email', 'email',
+			'Need a column for the new email in validate email.');
+	end;
+$test$ language plpgsql;
+
 create or replace function test_users_function_adduser_exists()
 returns setof text as $test$
 	begin
@@ -992,6 +1074,41 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_changeemail_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_email',
+			array['text', 'text', 'text'], 'record', 
+			'There needs to be a function to change user password.');
+		return next is_definer('users', 'change_email', 
+			array['text', 'text', 'text'], 
+			'Change user name needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changeemail_saves_data()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		loggedincur		refcursor;
+		newuser			text;
+		newemail		text;
+		user1			text;
+		session1		text;
+		thelink			uuid;
+		theemail		text;
+	begin
+		select into newusercur new_test_users();
+		select into loggedincur logged_in_test_users();
+		fetch from newusercur into newuser, newemail;
+		fetch from loggedincur into user1, session1;
+		select into theemail, thelink emailaddr, validlink
+			from users.change_email(session1, newemail, user1);
+		return next is(theemail, newemail,
+			'Change email should return the new email address.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1205,6 +1322,17 @@ returns setof text as $func$
 			return next 'Created the validation expiration index.';
 		end if;
 		
+		if failed_test('test_users_table_validateemail_exists') then
+			create table users.validate_email ()
+				inherits (users.validate);
+			return next 'Created the validate email table.';
+		end if;
+		if failed_test('test_users_table_validateemail_column_email_exists') then
+			alter table users.validate_email
+				add column email text;
+			return next 'Added the email column to the validate email table.';
+		end if;
+		
 		if failed_test('test_web_table_session_column_userid_exists') then
 			alter table web.session
 				add column user_id uuid default uuid_nil();
@@ -1315,7 +1443,7 @@ returns setof text as $func$
 		returns trigger as $$
 			begin
 				delete from users.user 
-					where id = (select user_id from users.validate
+					where id = (select user_id from only users.validate
 						where expire < now());
 				return null;
 			end;
@@ -1408,6 +1536,21 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_password.';
 
+		create or replace function users.change_email(
+			sessionid	text,
+			newemail	text,
+			passwd		text,
+			out		emailaddr		text,
+			out		validlink		uuid)
+		as $$
+			begin
+				emailaddr := newemail;
+				validlink := public.uuid_nil();
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_email.';
+
 		create trigger delete_unvalidated
 			after update
 			on users.user
@@ -1444,7 +1587,11 @@ returns setof text as $func$
 			users.change_password(
 				sessionid		text,
 				newpassword		text,
-				oldpassword		text)
+				oldpassword		text),
+			users.change_email(
+				sessionid		text,
+				username		text,
+				passwd			text)
 		from public;
 		
 		grant execute on function 
@@ -1467,7 +1614,11 @@ returns setof text as $func$
 			users.change_password(
 				sessionid		text,
 				newpassword		text,
-				oldpassword		text)
+				oldpassword		text),
+			users.change_email(
+				sessionid		text,
+				username		text,
+				passwd			text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
