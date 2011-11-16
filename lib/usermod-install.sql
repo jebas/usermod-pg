@@ -600,6 +600,22 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_table_validateemail_column_email_is_text()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate_email', 'email', 'text',
+			'Needs to know when the unvalidated user expires.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validateemail_cloumn_email_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'validate_email', 'email',
+			'Validate expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
 create or replace function test_users_function_adduser_exists()
 returns setof text as $test$
 	begin
@@ -1106,6 +1122,16 @@ returns setof text as $test$
 			from users.change_email(session1, newemail, user1);
 		return next is(theemail, newemail,
 			'Change email should return the new email address.');
+		return next results_eq(
+			$$select users.validate_email.link,
+				users.validate_email.email
+				from users.user,
+					users.validate_email
+				where users.user.id = users.validate_email.user_id
+					and users.user.name = '$$ || user1 || $$'$$,
+			$$values (cast('$$ || thelink || $$' as uuid), 
+				'$$ || newemail || $$')$$,
+			'Change email must returns a link and store the new address.');
 	end;
 $test$ language plpgsql;
 
@@ -1332,6 +1358,11 @@ returns setof text as $func$
 				add column email text;
 			return next 'Added the email column to the validate email table.';
 		end if;
+		if failed_test('test_users_table_validateemail_cloumn_email_is_not_null') then
+			alter table users.validate_email
+				alter column email set not null;
+			return next 'set validate email email column to not null.';
+		end if;
 		
 		if failed_test('test_web_table_session_column_userid_exists') then
 			alter table web.session
@@ -1379,6 +1410,24 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		
+		create or replace function users.get_new_link()
+		returns uuid as $$
+			declare
+				newlink		uuid;
+				linkholder	uuid;
+			begin
+				loop
+					select public.uuid_generate_v4() into newlink;
+					select link into linkholder 
+						from users.validate
+						where link = newlink;
+					exit when not found;
+				end loop;
+				return newlink;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		
 		create or replace function users.add_user(
 			username	text,
 			passwd		text,
@@ -1389,9 +1438,10 @@ returns setof text as $func$
 			declare
 				id_holder	uuid;
 				new_uid		uuid;
-				new_lid		uuid;
 			begin
 				perform users.check_password_length(passwd);
+				emailaddr := useremail;
+				validlink := users.get_new_link();
 				loop
 					select public.uuid_generate_v4() into new_uid;
 					select id into id_holder 
@@ -1404,17 +1454,8 @@ returns setof text as $func$
 						public.crypt(passwd, 
 							public.gen_salt('bf')), 
 						useremail);
-				loop
-					select public.uuid_generate_v4() into new_lid;
-					select link into id_holder 
-						from users.validate
-						where link = new_lid;
-					exit when not found;
-				end loop;
 				insert into users.validate (link, user_id) values
-					(new_lid, new_uid);
-				emailaddr := useremail;
-				validlink := new_lid;
+					(validlink, new_uid);
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1545,7 +1586,14 @@ returns setof text as $func$
 		as $$
 			begin
 				emailaddr := newemail;
-				validlink := public.uuid_nil();
+				validlink := users.get_new_link();
+				insert into users.validate_email (link, user_id, email) 
+					values (validlink, 
+						(select users.user.id
+							from users.user, web.session
+							where users.user.id = web.session.user_id 
+								and web.session.sess_id = sessionid),
+						newemail);
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1564,16 +1612,20 @@ returns setof text as $func$
 		return next 'Created the protect anonymous trigger.';
 
 		revoke all on function 
+			-- Support functions
 			users.check_password_length(
-				password	text),
+				password		text),
+			users.get_new_link(),
+			-- Triggers
+			users.delete_unvalidated(),
+			users.protect_anonymous(),
+			-- User Functions
 			users.add_user(
 				username		text,
 				passwd			text,
 				useremail		text),
 			users.validate_user(
 				linkcode		uuid),
-			users.delete_unvalidated(),
-			users.protect_anonymous(),
 			users.login(
 				sessionid		text,
 				username		text,
