@@ -1135,6 +1135,103 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_changeemail_fails_with_wrong_password()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		loggedincur		refcursor;
+		newuser			text;
+		newemail		text;
+		user1			text;
+		session1		text;
+	begin
+		select into newusercur new_test_users();
+		select into loggedincur logged_in_test_users();
+		fetch from newusercur into newuser, newemail;
+		fetch from loggedincur into user1, session1;
+		return next throws_ok(
+			$$select users.change_email('$$ || session1 || $$',
+				'$$ || newemail || $$', 'wrong')$$,
+			'P0001', 'Password was incorrect',
+			'Must use correct password to change email.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validateemail_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'validate_email',
+			array['uuid'], 'void', 
+			'There needs to be a function to validate new email addresses.');
+		return next is_definer('users', 'validate_email', 
+			array['uuid'], 
+			'Change user email needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validateemail_changes_email()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		loggedincur		refcursor;
+		newuser			text;
+		newemail		text;
+		user1			text;
+		session1		text;
+		thelink			uuid;
+		theemail		text;
+	begin
+		select into newusercur new_test_users();
+		select into loggedincur logged_in_test_users();
+		fetch from newusercur into newuser, newemail;
+		fetch from loggedincur into user1, session1;
+		select into theemail, thelink emailaddr, validlink
+			from users.change_email(session1, newemail, user1);
+		perform users.validate_email(thelink);
+		return next results_eq(
+			$$select email from users.user 
+				where name = lower('$$ || user1 || $$')$$,
+			$$values ('$$ || newemail || $$')$$,
+			'Email validate should update the users email address.');
+		return next is_empty(
+			$$select * from users.validate_email
+				where link = '$$ || thelink || $$'$$,
+			'The update email link should be deleted when validated.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_validateemail_expires_old()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		loggedincur		refcursor;
+		newuser			text;
+		newemail		text;
+		user1			text;
+		session1		text;
+		user2			text;
+		session2		text;
+		thelink			uuid;
+		theemail		text;
+	begin
+		select into newusercur new_test_users();
+		select into loggedincur logged_in_test_users();
+		fetch from newusercur into newuser, newemail;
+		fetch from loggedincur into user1, session1;
+		fetch from loggedincur into user2, session2;
+		select into theemail, thelink emailaddr, validlink
+			from users.change_email(session1, newemail, user1);
+		update users.validate_email 
+			set expire = now() - interval '1 day'
+			where link = thelink;
+		perform users.change_password(session2, 'password', user2);
+		return next is_empty(
+			$$select * from users.validate_email
+				where link = '$$ || thelink || $$'$$,
+			'Expired email updates should expire on user updates.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1486,6 +1583,8 @@ returns setof text as $func$
 				delete from users.user 
 					where id = (select user_id from only users.validate
 						where expire < now());
+				delete from users.validate_email
+					where expire < now();
 				return null;
 			end;
 		$$ language plpgsql security definer
@@ -1584,16 +1683,42 @@ returns setof text as $func$
 			out		emailaddr		text,
 			out		validlink		uuid)
 		as $$
+			declare
+				userid		uuid;
 			begin
 				emailaddr := newemail;
 				validlink := users.get_new_link();
+				select into userid users.user.id
+					from users.user, web.session
+					where users.user.id = web.session.user_id 
+						and users.user.password = 
+							public.crypt(passwd, password)
+						and web.session.sess_id = sessionid;
+				if not found then
+					raise 'Password was incorrect';
+				end if;
 				insert into users.validate_email (link, user_id, email) 
-					values (validlink, 
-						(select users.user.id
-							from users.user, web.session
-							where users.user.id = web.session.user_id 
-								and web.session.sess_id = sessionid),
-						newemail);
+					values (validlink, userid, newemail);
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_email.';
+		
+		create or replace function users.validate_email(
+			linkid		uuid)
+		returns void as $$
+			declare
+				newemail		text;
+				userid			uuid;
+			begin
+				select into userid, newemail user_id, email 
+					from users.validate_email
+					where link = linkid; 
+				update users.user
+					set email = newemail
+					where id = userid;
+				delete from users.validate_email
+					where link = linkid;
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1643,7 +1768,9 @@ returns setof text as $func$
 			users.change_email(
 				sessionid		text,
 				username		text,
-				passwd			text)
+				passwd			text),
+			users.validate_email(
+				link			uuid)
 		from public;
 		
 		grant execute on function 
@@ -1670,7 +1797,9 @@ returns setof text as $func$
 			users.change_email(
 				sessionid		text,
 				username		text,
-				passwd			text)
+				passwd			text),
+			users.validate_email(
+				link			uuid)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;

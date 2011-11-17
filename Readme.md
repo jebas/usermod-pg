@@ -42,6 +42,7 @@ releasing the information outside of the database.
 		<td>done</td>
 	</tr>
 		<td>Validate New User Email</td>
+		<td>done</td>
 	<tr>
 		<td>User name and password retrieval</td>
 	</tr>
