@@ -104,7 +104,8 @@ returns refcursor as $$
 		refcur	refcursor;
 	begin
 		open refcur for 
-			select users.test_user.name
+			select users.test_user.name,
+				users.test_user.email
 			from users.test_user
 			left outer join users.user on 
 				(lower(users.test_user.name) = 
@@ -120,7 +121,8 @@ returns refcursor as $$
 		refcur	refcursor;
 	begin
 		open refcur for 
-			select users.test_user.name
+			select users.test_user.name,
+				users.test_user.email
 			from users.test_user
 			left outer join users.user on 
 				(lower(users.test_user.name) = 
@@ -613,6 +615,80 @@ returns setof text as $test$
 	begin
 		return next col_not_null('users', 'validate_email', 'email',
 			'Validate expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_exists()
+returns setof text as $test$
+	begin 
+		return next has_table('users', 'validate_request',
+			'Need a table for unvalidated requests.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_link_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate_request', 'link',
+			'Needs a validation request link column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_link_is_uuid()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate_request', 'link', 'uuid',
+			'The validation request link needs to be a uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'validate_request', 'user_id',
+			'Validate request needs a link to the user table.');
+	end; 
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_userid_is_uuid()
+returns setof text as $test$
+	begin 
+		return next col_type_is('users', 'validate_request', 'user_id', 'uuid',
+			'Validation request user id needs to be uuid.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_expire_exists()
+returns setof text as $test$
+	begin 
+		return next has_column('users', 'validate_request', 'expire',
+			'Validate request needs an expriration column.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_expire_is_timestamp()
+returns setof text as $test$
+	begin
+		return next col_type_is('users', 'validate_request', 'expire',
+			'timestamp with time zone',
+			'Needs to know when the unvalidated requests expires.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_cloumn_expire_is_not_null()
+returns setof text as $test$
+	begin
+		return next col_not_null('users', 'validate_request', 'expire',
+			'Validate request expire cannot be null.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_table_validaterequest_column_expire_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'validate_request', 'expire',
+			$$(now() + '7 days'::interval)$$,
+			'Validate request expire needs to be set to the future.');
 	end;
 $test$ language plpgsql;
 
@@ -1232,6 +1308,70 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_retrieveuserrequest_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'retrieve_user_request',
+			array['text'], 'record', 
+			'There needs to be a function to request a forgotten user retrieval.');
+		return next is_definer('users', 'retrieve_user_request', 
+			array['text'], 
+			'Retrieve user request needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_retrieveuserrequest_returns_link()
+returns setof text as $test$
+	declare
+		activeusercur		refcursor;
+		user1				text;
+		email1				text;
+		theemail			text;
+		thelink				uuid;
+	begin
+		select into activeusercur active_test_users();
+		fetch from activeusercur into user1, email1;
+		select into theemail, thelink useremail, userlink
+			from users.retrieve_user_request(email1);
+		return next is(email1, theemail,
+			'Retrieve user request should return the email sent.');
+		return next results_eq(
+			$$select id from users.user 
+				where name = '$$ || user1 || $$'$$,
+			$$select user_id from users.validate_request
+				where link = '$$ || thelink || $$'$$,
+			'There must be a link to the retrieve user request.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_retrieveuserrequest_fails_bad_email()
+returns setof text as $test$
+	declare
+		newusercur		refcursor;
+		user1			text;
+		email1			text;
+	begin
+		select into newusercur new_test_users();
+		fetch from newusercur into user1, email1;
+		return next throws_ok(
+			$$select users.retrieve_user_request('$$ || email1 || $$')$$,
+			'P0001', 'Email does not exist.',
+			'Recovery request needs to fail if email is bad.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_retrieveuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'retrieve_user',
+			array['uuid'], 'record', 
+			'There needs to be a function to retrieve a forgotten user.');
+		return next is_definer('users', 'retrieve_user', 
+			array['uuid'], 
+			'Retrieve user needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1459,6 +1599,12 @@ returns setof text as $func$
 			alter table users.validate_email
 				alter column email set not null;
 			return next 'set validate email email column to not null.';
+		end if;
+		
+		if failed_test('test_users_table_validaterequest_exists') then
+			create table users.validate_request ()
+				inherits (users.validate);
+			return next 'Create the validate request table.';
 		end if;
 		
 		if failed_test('test_web_table_session_column_userid_exists') then
@@ -1723,6 +1869,42 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_email.';
+		
+		create or replace function users.retrieve_user_request(
+			emailaddr		text,
+			out		useremail		text,
+			out		userlink		uuid)
+		as $$
+			declare
+				userid		uuid;
+			begin
+				useremail := emailaddr;
+				userlink := users.get_new_link();
+				select into userid id from users.user
+					where email = useremail;
+				if found then
+					insert into users.validate_request (user_id, link)
+						values (userid, userlink);
+				else
+					raise 'Email does not exist.';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.retrieve_user_request.';
+
+		create or replace function users.retrieve_user(
+			thelink		uuid,
+			out		username		text,
+			out		userpassword	text)
+		as $$
+			begin
+				username := 'fred';
+				userpassword := 'fred';
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.retrieve_user.';
 
 		create trigger delete_unvalidated
 			after update
@@ -1770,7 +1952,9 @@ returns setof text as $func$
 				username		text,
 				passwd			text),
 			users.validate_email(
-				link			uuid)
+				link			uuid),
+			users.retrieve_user_request(
+				emailaddr		text)
 		from public;
 		
 		grant execute on function 
@@ -1799,7 +1983,9 @@ returns setof text as $func$
 				username		text,
 				passwd			text),
 			users.validate_email(
-				link			uuid)
+				link			uuid),
+			users.retrieve_user_request(
+				emailaddr		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
