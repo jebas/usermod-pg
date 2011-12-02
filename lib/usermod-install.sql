@@ -138,7 +138,8 @@ returns refcursor as $$
 		refcur	refcursor;
 	begin
 		open refcur for
-			select users.test_user.name
+			select users.test_user.name,
+				users.test_user.email
 			from (users.user left outer join web.session on 
 				(users.user.id = web.session.user_id)),
 				users.test_user
@@ -1372,6 +1373,32 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_retrieveuser_returns_data()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+		email1				text;
+		theemail			text;
+		thelink				uuid;
+		retname				text;
+		retpasswd			text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1, email1;
+		select into theemail, thelink useremail, userlink
+			from users.retrieve_user_request(email1);
+		select into retname, retpasswd username, userpassword
+			from users.retrieve_user(thelink);
+		return next is(retname, user1,
+			'Retrieve user should return the user name.');
+		return next lives_ok(
+			$$select users.login('web-session-1', '$$ || retname || $$',
+				'$$ || retpasswd || $$')$$,
+			'The user should be able to login with the username and password.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1899,8 +1926,18 @@ returns setof text as $func$
 			out		userpassword	text)
 		as $$
 			begin
-				username := 'fred';
-				userpassword := 'fred';
+				select users.user.name into username
+					from users.user,
+						users.validate_request
+					where users.user.id = users.validate_request.user_id
+						and users.validate_request.link = thelink;
+				userpassword := '';
+				for iLoop in 1 .. 10 loop
+					userpassword = userpassword || chr(int4(random()*26)+97);
+				end loop;
+				update users.user 
+					set password = public.crypt(userpassword, public.gen_salt('bf'))
+					where name = lower(username);
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1954,7 +1991,9 @@ returns setof text as $func$
 			users.validate_email(
 				link			uuid),
 			users.retrieve_user_request(
-				emailaddr		text)
+				emailaddr		text),
+			users.retrieve_user(
+				thelink			uuid)
 		from public;
 		
 		grant execute on function 
@@ -1985,7 +2024,9 @@ returns setof text as $func$
 			users.validate_email(
 				link			uuid),
 			users.retrieve_user_request(
-				emailaddr		text)
+				emailaddr		text),
+			users.retrieve_user(
+				thelink			uuid)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
