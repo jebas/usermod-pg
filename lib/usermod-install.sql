@@ -988,7 +988,7 @@ returns setof text as $test$
 		fetch from loggedoutcur into user1;
 		return next throws_ok(
 			$$select users.login('web-session-1', '$$ || user1 || $$', 'wrong')$$,
-			'23502', 'null value in column "user_id" violates not-null constraint',
+			'P0001', 'Bad username or password.',
 			'Failed login needs to throw an error.');
 	end;
 $test$ language plpgsql;
@@ -1004,7 +1004,7 @@ returns setof text as $test$
 		return next throws_ok(
 			$$select users.login('web-session-1', '$$ || user1 || $$',
 				'$$ || user1 || $$')$$,
-			'23502', 'null value in column "user_id" violates not-null constraint',
+			'P0001', 'Bad username or password.',
 			'Failed login needs to throw an error.');
 	end;
 $test$ language plpgsql;
@@ -1399,6 +1399,27 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_login_removes_retrival()
+returns setof text as $text$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+		email1				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1, email1;
+		perform users.retrieve_user_request(email1);
+		perform users.login('web-session-1', user1, user1);
+		return next is_empty(
+			$$select * 
+				from users.user, 
+					users.validate_request
+				where users.user.id = users.validate_request.user_id
+					and users.user.name = '$$ || user1 || $$'$$,
+			'Successful login should remove the user''s validation request');
+	end;
+$text$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -1786,7 +1807,23 @@ returns setof text as $func$
 			username		text,
 			passwd			text)
 		returns void as $$
+			declare
+				theuserid	uuid;
 			begin
+				select id into theuserid
+					from users.user
+					where name = lower(username)
+						and active = true
+						and password = public.crypt(passwd, password);
+				if not found then
+					raise 'Bad username or password.';
+				end if;
+				update web.session
+					set user_id = theuserid
+					where sess_id = sessionid;
+				delete from users.validate_request
+					where user_id = theuserid;
+				/*
 				update web.session 
 					set user_id = (select id 
 						from users.user 
@@ -1794,6 +1831,7 @@ returns setof text as $func$
 							and active = true
 							and password = public.crypt(passwd, password))
 					where sess_id = sessionid;
+				*/
 			end;
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;

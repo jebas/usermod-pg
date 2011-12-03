@@ -44,12 +44,26 @@ releasing the information outside of the database.
 		<td>Validate New User Email</td>
 		<td>done</td>
 	<tr>
+		<td>User name and password retrieval request</td>
+		<td>done</td>
+	</tr>
+	<tr>
 		<td>User name and password retrieval</td>
+		<td>done</td>
 	</tr>
 </table>
 
+This module is used only to establish a valid user to the web site.  
+Therefore only the most basic login, log out, and information functions 
+are available here.
+
 This module does not include features like avatars, descriptions, 
-biographies, ect.  Those features should be added in a profile module.  
+biographies, ect.  Those features will be added in a profile module.  
+
+Additionally group functions are also placed into a different 
+module.  Since administration is given to a group of people, 
+the basis of the permissions functions will be a part of the group
+module.  
 
 ## Requirements
 ###Production
