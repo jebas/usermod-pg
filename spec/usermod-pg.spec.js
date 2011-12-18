@@ -1,6 +1,22 @@
 /**
  * 
  */
+
+describe('usermod', function () {
+	describe('constructor', function () {
+		it('should have a constructor function', function () {
+			
+		})
+	});
+});
+
+
+
+
+
+
+
+/*
 var users = require('../');
 var connectStr = "tcp://thetester:password@localhost/pgstore";
 var pg = require('pg');
@@ -66,11 +82,9 @@ describe('user', function () {
 		});
 		
 		it('should report database connection problems to the console log', function () {
-			/* Create this test. */
 		});
 
 		it('should report client problems to the console log', function () {
-			/* Create this test. */
 		});
 		
 		it('should return anonymous when no one is logged in', function () {
@@ -125,11 +139,9 @@ describe('user', function () {
 		});
 		
 		it('should report database connection problems to the console log', function () {
-			/* Create this test. */
 		});
 
 		it('should report client problems to the console log', function () {
-			/* Create this test. */
 		});
 		
 		it('should fail if nothing is sent', function () {
@@ -238,11 +250,9 @@ describe('user', function () {
 		});
 		
 		it('should report database connection problems to the console log', function () {
-			/* Create this test. */
 		});
 
 		it('should report client problems to the console log', function () {
-			/* Create this test. */
 		});
 		
 		it('should return a redirection to the home page', function () {
@@ -411,7 +421,6 @@ describe('user', function () {
 			});
 		});
 		
-		/*
 		it('should return an error if the old password does not match user name', function () {
 			var callCount = this.res.render.callCount;
 			users.login(this.req, this.res);
@@ -434,10 +443,9 @@ describe('user', function () {
 				});
 			});
 		});
-		*/
 	});
 });
-
+*/
 
 
 
