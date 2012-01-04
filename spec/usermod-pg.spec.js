@@ -1,12 +1,96 @@
 /**
+ * User Module JavaScript Test file.
  * 
+ * Will need two database logins for testing.
+ * The first login will needs to access the database test scripts.
+ * The second will be the tested nodepg user.
  */
 
+var UserMod = require('../');
+var pg = require('pg');
+
+function rootConnect (callback) {
+	pg.connect('tcp://jeff:tester@localhost/pgstore',
+		function (err, client) {
+			if (err) {
+				console.log(JSON.stringify(err));
+			}
+			if (client) {
+				callback(client);
+			}
+		}
+	);
+};
+
+function pgConnect (callback) {
+	pg.connect('tcp://nodepg:password@localhost/pgstore',
+		function (err, client) {
+			if (err) {
+				console.log(JSON.stringify(err));
+			}
+			if (client) {
+				callback(client);
+			}
+		}
+	);
+};
+
 describe('usermod', function () {
+	beforeEach(function () {
+		// Setup the database.
+		var doneit = false;
+		rootConnect(function (client) {
+			client.query('select setup_10_web(); select startup_20_users()',
+				function (err, result) {
+					if (err) {
+						console.log(JSON.stringify(err));
+					}
+					doneit = true;
+				}
+			);
+		});
+		waitsFor(function () {
+			return doneit;
+		}, 'Setting up the database.', 10000);
+		runs(function () {
+			this.users = new UserMod(function () {});
+		});
+	});
+	
 	describe('constructor', function () {
 		it('should have a constructor function', function () {
-			
-		})
+			expect(typeof UserMod).toEqual('function');
+		});
+		
+		it('should throw an exception without a client function', function () {
+			expect(function () {
+				var users = new UserMod();
+			}).toThrow(TypeError);
+		});
+		
+		it('should throw an exception when client input is not a function', function () {
+			expect(function () {
+				var users = new UserMod('text');
+			}).toThrow(TypeError);
+		});
+	});
+	
+	describe('get user', function () {
+		it('should have a get user function', function () {
+			expect(typeof this.users.getUser).toEqual('function');
+		});
+	});
+	
+	describe('login', function () {
+		it('should have a login function', function () {
+			expect(typeof this.users.login).toEqual('function');
+		});
+	});
+	
+	describe('add user', function () {
+		it('should have an add user function', function () {
+			expect(typeof this.users.addUser).toEqual('function');
+		});
 	});
 });
 

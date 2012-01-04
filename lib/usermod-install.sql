@@ -1448,6 +1448,56 @@ returns setof text as $test$
 	end;
 $test$ language plpgsql;
 
+create or replace function test_users_function_getuser_exists()
+returns setof text as $test$
+	begin
+		return next function_returns('users', 'get_user',
+			array['text'], 'text', 
+			'There needs to be a function to request a forgotten user retrieval.');
+		return next is_definer('users', 'get_user', array['text'], 
+			'Retrieve user request needs to securite definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_getuser_returns_anon_for_bad_sessions()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select users.get_user('bad_session_id')$$,
+			$$values ('anonymous')$$,
+			'Bad session ids should return the anonymous user.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_getuser_returns_user_name()
+returns setof text as $test$
+	declare
+		loggedoutcur		refcursor;
+		user1				text;
+		email1				text;
+	begin
+		select into loggedoutcur logged_out_test_users();
+		fetch from loggedoutcur into user1, email1;
+		return next results_eq(
+			$$select users.get_user('web-session-1')$$,
+			$$select users.user.name
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = 'web-session-1'$$,
+			'Get user should return anonymous before the user logs in.');
+		perform users.login('web-session-1', user1, user1);
+		return next results_eq(
+			$$select users.get_user('web-session-1')$$,
+			$$select users.user.name
+				from users.user,
+					web.session
+				where users.user.id = web.session.user_id
+					and web.session.sess_id = 'web-session-1'$$,
+			'Get user should always show the logged in user.');
+	end;
+$test$ language plpgsql;
+
 create or replace function correct_users()
 returns setof text as $func$
 	begin
@@ -2001,6 +2051,27 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.retrieve_user.';
+		
+		create or replace function users.get_user(
+			sessionid		text)
+		returns text as $$
+			declare
+				username	text;
+			begin
+				select users.user.name into username
+					from users.user,
+						web.session
+					where users.user.id = web.session.user_id
+						and web.session.sess_id = sessionid;
+				if found then
+					return username;
+				else
+					return 'anonymous';
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.get_user.';
 
 		create trigger delete_unvalidated
 			after update
@@ -2052,7 +2123,9 @@ returns setof text as $func$
 			users.retrieve_user_request(
 				emailaddr		text),
 			users.retrieve_user(
-				thelink			uuid)
+				thelink			uuid),
+			users.get_user(
+				sessionid		text)
 		from public;
 		
 		grant execute on function 
@@ -2085,7 +2158,9 @@ returns setof text as $func$
 			users.retrieve_user_request(
 				emailaddr		text),
 			users.retrieve_user(
-				thelink			uuid)
+				thelink			uuid),
+			users.get_user(
+				sessionid		text)
 		to nodepg;
 		
 		grant usage on schema users to nodepg;
