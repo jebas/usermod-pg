@@ -1,171 +1,69 @@
 -- Database installation program for user module.
-create or replace function startup_20_users()
-returns setof text as $test$
+create or replace function get_new_test_user(
+	out newusername		text,
+	out newpassword		text,
+	out newemail 		text)
+as $test$
 	declare
-		nameholder	text;
-		emailholder	text;
-		foundname	text;
-		foundid		uuid;
-		thelink		uuid;
+		idholder		uuid;
 	begin
-		perform public.shutdown_20_users();
 		loop
-			select md5(random()::text) into nameholder;
-			select md5(random()::text) into emailholder;
-			select name into foundname 
-				from users.test_user
-				where name = nameholder;
-			if found then
-				continue;
-			end if;
-			select id into foundid 
-				from users.user
-				where name = lower(nameholder)
-					or email = lower(nameholder);
-			if found then
-				continue;
-			end if;
-			insert into users.test_user (name, email) 
-				values (nameholder, emailholder);
-			if (select count(*) > 5 from users.test_user) then
-				select into thelink validlink from 
-					users.add_user(nameholder, nameholder, emailholder);
-			end if;
-			if (select count(*) > 10 from users.test_user) then
-				perform users.validate_user(thelink);
-			end if;
-			exit when (select count(*) > 14 from users.test_user);
+			select md5(random()::text) into newusername;
+			select md5(random()::text) into newemail;
+			select id into idholder from users.user
+				where name = newusername
+					or email = newemail;
+			exit when not found;
 		end loop;
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
+		select md5(random()::text) into newpassword;
 	end;
 $test$ language plpgsql;
 
-create or replace function shutdown_20_users()
-returns setof text as $test$
+create or replace function get_inactive_test_user(
+	out inactusername		text,
+	out inactpassword		text,
+	out inactemail 			text,
+	out validationlink		uuid)
+as $test$
 	begin
-		delete from users.user where name in 
-			(select name from users.test_user);
-		delete from users.test_user;
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
+		select into inactusername, inactpassword, inactemail
+			newusername, newpassword, newemail
+			from get_new_test_user();
+		select into validationlink validlink from 
+			users.add_user(inactusername, inactpassword, inactemail);
 	end;
 $test$ language plpgsql;
 
-create or replace function setup_20_users()
-returns setof text as $test$
+create or replace function get_logged_out_test_user(
+	out loggedoutusername	text,
+	out loggedoutpassword	text,
+	out loggedoutemail		text)
+as $test$
 	declare
-		loggedoutcur		refcursor;
-		user1				text;
-		user2				text;
+		validation 			uuid;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1;
-		fetch from loggedoutcur into user2;
-		perform users.login('web-session-3', user1, user1);
-		perform users.login('web-session-4', user2, user2);
-	exception
-		when invalid_schema_name 
-			or undefined_function 
-			or undefined_table 
-			or undefined_column then
-			--do nothing
-	end; 
+		select into loggedoutusername, loggedoutpassword, loggedoutemail,
+			validation inactusername, inactpassword, inactemail, validationlink
+			from get_inactive_test_user();
+		perform users.validate_user(validation);
+	end;
 $test$ language plpgsql;
 
-create or replace function new_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
+create or replace function get_logged_in_test_user(
+	out loggedinusername	text,
+	out loggedinpassword	text,
+	out loggedinemail		text,
+	out loggedinsession		text)
+as $test$
 	begin
-		open refcur for 
-			select users.test_user.name,
-				users.test_user.email
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active is null;
-		return refcur;
+		select into loggedinusername, loggedinpassword, loggedinemail
+			loggedoutusername, loggedoutpassword, loggedoutemail
+			from get_logged_out_test_user();
+		select into loggedinsession sess_id 
+			from create_test_session();
+		perform users.login(loggedinsession, loggedinusername, loggedinpassword);
 	end;
-$$ language plpgsql;  
-
-create or replace function inactive_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select users.test_user.name,
-				users.test_user.email
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active = false;
-		return refcur;
-	end;
-$$ language plpgsql;  
-
-create or replace function active_test_users()
-returns refcursor as $$
-	declare 
-		refcur	refcursor;
-	begin
-		open refcur for 
-			select users.test_user.name,
-				users.test_user.email
-			from users.test_user
-			left outer join users.user on 
-				(lower(users.test_user.name) = 
-				users.user.name)
-			where users.user.active = true;
-		return refcur;
-	end;
-$$ language plpgsql;
-
-create or replace function logged_out_test_users()
-returns refcursor as $$
-	declare
-		refcur	refcursor;
-	begin
-		open refcur for
-			select users.test_user.name,
-				users.test_user.email
-			from (users.user left outer join web.session on 
-				(users.user.id = web.session.user_id)),
-				users.test_user
-			where users.user.name = users.test_user.name
-				and users.user.active = true
-				and web.session.sess_id is null;
-		return refcur;
-	end;
-$$ language plpgsql;
-
-create or replace function logged_in_test_users()
-returns refcursor as $$
-	declare
-		refcur refcursor;
-	begin
-		open refcur for
-			select users.test_user.name, 
-				web.session.sess_id
-			from users.test_user,
-				users.user,
-				web.session
-			where users.user.name = lower(users.test_user.name)
-				and users.user.id = web.session.user_id;
-		return refcur;
-	end;
-$$ language plpgsql;
+$test$ language plpgsql;
 
 create or replace function test_users_schema()
 returns setof text as $$
@@ -200,54 +98,6 @@ returns setof text as $$
 		return next has_table('users', 'user', 'There should be a user table.');
 	end;
 $$ language plpgsql;
-
-create or replace function test_users_table_testusers_exists()
-returns setof text as $test$
-	begin
-		return next has_table('users', 'test_user', 
-			'There should be a table to hold test users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_testusers_column_name_exists()
-returns setof text as $test$
-	begin
-		return next has_column('users', 'test_user', 'name',
-			'Needs a user name column in test users.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testuser_column_name_is_text()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'test_user', 'name', 'text',
-			'The test user name needs to be text.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testuser_column_name_is_pk()
-returns setof text as $test$
-	begin 
-		return next col_is_pk('users', 'test_user', 'name',
-			'Name should be primary key for test users.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_table_testusers_column_email_exists()
-returns setof text as $test$
-	begin
-		return next has_column('users', 'test_user', 'email',
-			'Needs a user email column in test users.');
-	end;
-$test$ language plpgsql;  
-
-create or replace function test_users_table_testuser_column_email_is_text()
-returns setof text as $test$
-	begin
-		return next col_type_is('users', 'test_user', 'email', 'text',
-			'The test user email needs to be text.');
-	end;
-$test$ language plpgsql;  
 
 create or replace function test_users_table_user_column_id_exists()
 returns setof text as $$
@@ -708,16 +558,16 @@ $test$ language plpgsql;
 create or replace function test_users_function_adduser_inserts_data()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
 		user1			text;
+		password1		text;
 		email1			text;
 		theemail		text;
 		thelink			uuid;
 	begin
-		select into newusercur new_test_users();
-		fetch from newusercur into user1, email1;
+		select into user1, password1, email1 newusername, newpassword, newemail
+			from get_new_test_user();
 		select into theemail, thelink emailaddr, validlink
-			from users.add_user(user1, user1, email1);
+			from users.add_user(user1, password1, email1);
 		return next is(theemail, email1,
 			'User add needs to return the user''s email address.');
 		return next results_eq(
@@ -729,7 +579,7 @@ returns setof text as $test$
 		return next results_ne(
 			$$select password from users.user
 				where name = '$$ || user1 || $$'$$,
-			$$values ('$$ || user1 || $$')$$,
+			$$values ('$$ || password1 || $$')$$,
 			'User''s password needs to be encrypted.');
 		return next results_eq(
 			$$select users.validate.link
@@ -744,12 +594,11 @@ $test$ language plpgsql;
 create or replace function test_users_function_add_user_password_length()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
 		user1			text;
 		email1			text;
 	begin
-		select new_test_users() into newusercur;
-		fetch from newusercur into user1, email1;
+		select into user1, email1 newusername, newemail
+			from get_new_test_user();
 		return next throws_ok(
 			$$select users.add_user( 
 				'$$ || user1 || $$',
@@ -775,18 +624,12 @@ $test$ language plpgsql;
 create or replace function test_users_function_validate_activates_user()
 returns setof text as $test$
 	declare
-		inactiveusercur		refcursor;
 		user1				text;
 		thelink				uuid;
 		validateduser		text;
 	begin
-		select into inactiveusercur inactive_test_users();
-		fetch from inactiveusercur into user1;
-		select into thelink users.validate.link 
-			from users.validate,
-				users.user
-			where users.user.id = users.validate.user_id
-				and users.user.name = user1;
+		select into user1, thelink inactusername, validationlink
+			from get_inactive_test_user();
 		select into validateduser username from users.validate_user(thelink);
 		return next is(validateduser, user1,
 			'Validation function needs to return the user name.');
@@ -825,12 +668,10 @@ $test$ language plpgsql;
 create or replace function test_users_trigger_removeunvalidated_removes_unvalidated()
 returns setof text as $test$
 	declare
-		inactiveusercur		refcursor;
 		user1				text;
-		email1				text;
 	begin
-		select into inactiveusercur inactive_test_users();
-		fetch from inactiveusercur into user1, email1;
+		select into user1 inactusername
+			from get_inactive_test_user();
 		update users.validate set expire = now() - interval '1 day'
 			where user_id = (select id from users.user 
 				where name = user1);
@@ -941,18 +782,20 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_changes_session_owner()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
+		password1			text;
+		session1			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1;
-		perform users.login('web-session-1', user1, user1);
+		select into user1, password1 loggedoutusername, loggedoutpassword
+			from get_logged_out_test_user();
+		select into session1 sess_id from create_test_session();
+		perform users.login(session1, user1, password1);
 		return next results_eq(
 			$$select users.user.name 
 				from users.user,
 					web.session
 				where users.user.id = web.session.user_id
-					and web.session.sess_id = 'web-session-1'$$,
+					and web.session.sess_id = '$$ || session1 || $$'$$,
 			$$values ('$$ || user1 || $$')$$,
 			'Login should update the session to the user.');
 	end;
@@ -961,33 +804,37 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_username_case_insensitive()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
+		password1			text;
+		session1			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1;
-		perform users.login('web-session-1', upper(user1), user1);
+		select into user1, password1 loggedoutusername, loggedoutpassword
+			from get_logged_out_test_user();
+		select into session1 sess_id from create_test_session();
+		perform users.login(session1, upper(user1), password1);
 		return next results_eq(
 			$$select users.user.name 
 				from users.user,
 					web.session
 				where users.user.id = web.session.user_id
-					and web.session.sess_id = 'web-session-1'$$,
+					and web.session.sess_id = '$$ || session1 || $$'$$,
 			$$values ('$$ || user1 || $$')$$,
-			'Login should update the session to the user.');
+			'The case of the user name should not matter');
 	end;
 $test$ language plpgsql;
 
 create or replace function test_users_function_login_fails_for_incorrect_values()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
+		session1			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1;
+		select into user1 loggedoutusername
+			from get_logged_out_test_user();
+		select into session1 sess_id from create_test_session();
 		return next throws_ok(
-			$$select users.login('web-session-1', '$$ || user1 || $$', 'wrong')$$,
+			$$select users.login('$$ || session1 || $$', '$$ || user1 || $$',
+				'wrong')$$,
 			'P0001', 'Bad username or password.',
 			'Failed login needs to throw an error.');
 	end;
@@ -996,16 +843,18 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_username_only_active()
 returns setof text as $test$
 	declare
-		inactiveusercur		refcursor;
 		user1				text;
+		password1			text;
+		session1			text;
 	begin
-		select into inactiveusercur inactive_test_users();
-		fetch from inactiveusercur into user1;
+		select into user1, password1 inactusername, inactpassword
+			from get_inactive_test_user();
+		select into session1 sess_id from create_test_session();
 		return next throws_ok(
-			$$select users.login('web-session-1', '$$ || user1 || $$',
-				'$$ || user1 || $$')$$,
+			$$select users.login('$$ || session1 || $$', '$$ || user1 || $$',
+				'$$ || password1 || $$')$$,
 			'P0001', 'Bad username or password.',
-			'Failed login needs to throw an error.');
+			'Inactive users cannot log in.');
 	end;
 $test$ language plpgsql;
 
@@ -1024,12 +873,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_logout_returns_to_anonymous()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		user1			text;
 		session1		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		fetch from loggedincur into user1, session1;
+		select into session1 loggedinsession
+			from get_logged_in_test_user();
 		perform users.logout(session1);
 		return next results_eq(
 			$$select user_id from web.session 
@@ -1054,18 +901,15 @@ $test$ language plpgsql;
 create or replace function test_users_function_changename_changes_name()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		newusercur		refcursor;
-		user1			text;
+		password1		text;
 		session1		text;
 		newname			text;
-		newemail		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		select into newusercur new_test_users();
-		fetch from loggedincur into user1, session1;
-		fetch from newusercur into newname, newemail;
-		perform users.change_name(session1, newname, user1);
+		select into password1, session1 loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
+		select into newname newusername
+			from get_new_test_user();
+		perform users.change_name(session1, newname, password1);
 		return next results_eq(
 			$$select users.user.name
 				from users.user,
@@ -1080,17 +924,13 @@ $test$ language plpgsql;
 create or replace function test_users_function_changename_fails_with_wrong_password()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		newusercur		refcursor;
-		user1			text;
 		session1		text;
 		newname			text;
-		newemail		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		select into newusercur new_test_users();
-		fetch from loggedincur into user1, session1;
-		fetch from newusercur into newname, newemail;
+		select into session1 loggedinsession
+			from get_logged_in_test_user();
+		select into newname newusername
+			from get_new_test_user();
 		return next throws_ok(
 			$$select users.change_name('$$ || session1 || $$', 
 				'$$ || newname || $$', 'wrong')$$,
@@ -1114,13 +954,12 @@ $test$ language plpgsql;
 create or replace function test_users_function_changepassword_changes_password()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		user1			text;
+		password1		text;
 		session1		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		fetch from loggedincur into user1, session1;
-		perform users.change_password(session1, 'password', user1);
+		select into password1, session1 loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
+		perform users.change_password(session1, 'password', password1);
 		return next results_eq(
 			$$select users.user.password = public.crypt('password', users.user.password)
 				from users.user,
@@ -1135,12 +974,10 @@ $test$ language plpgsql;
 create or replace function test_users_function_changepassword_fails_with_wrong_password()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		user1			text;
 		session1		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		fetch from loggedincur into user1, session1;
+		select into session1 loggedinsession
+			from get_logged_in_test_user();
 		return next throws_ok(
 			$$select users.change_password('$$ || session1 || $$', 
 				'password', 'wrong')$$,
@@ -1152,15 +989,14 @@ $test$ language plpgsql;
 create or replace function test_users_function_changepassword_fails_for_short_passwords()
 returns setof text as $test$
 	declare
-		loggedincur		refcursor;
-		user1			text;
+		password1		text;
 		session1		text;
 	begin 
-		select into loggedincur logged_in_test_users();
-		fetch from loggedincur into user1, session1;
+		select into password1, session1 loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
 		return next throws_ok(
 			$$select users.change_password('$$ || session1 || $$', 
-				'four', '$$ || user1 || $$')$$,
+				'four', '$$ || password1 || $$')$$,
 			'23514', 
 			'new row for relation "user" violates check constraint "passwd_len"',
 			'User password must be a minimum of 5 characters.');
@@ -1182,22 +1018,21 @@ $test$ language plpgsql;
 create or replace function test_users_function_changeemail_saves_data()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
-		loggedincur		refcursor;
-		newuser			text;
-		newemail		text;
 		user1			text;
+		password1		text;
 		session1		text;
+		newuseremail	text;
 		thelink			uuid;
 		theemail		text;
-	begin
-		select into newusercur new_test_users();
-		select into loggedincur logged_in_test_users();
-		fetch from newusercur into newuser, newemail;
-		fetch from loggedincur into user1, session1;
+	begin 
+		select into user1, password1, session1 
+			loggedinusername, loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
+		select into newuseremail newemail
+			from get_new_test_user();
 		select into theemail, thelink emailaddr, validlink
-			from users.change_email(session1, newemail, user1);
-		return next is(theemail, newemail,
+			from users.change_email(session1, newuseremail, password1);
+		return next is(theemail, newuseremail,
 			'Change email should return the new email address.');
 		return next results_eq(
 			$$select users.validate_email.link,
@@ -1207,7 +1042,7 @@ returns setof text as $test$
 				where users.user.id = users.validate_email.user_id
 					and users.user.name = '$$ || user1 || $$'$$,
 			$$values (cast('$$ || thelink || $$' as uuid), 
-				'$$ || newemail || $$')$$,
+				'$$ || newuseremail || $$')$$,
 			'Change email must returns a link and store the new address.');
 	end;
 $test$ language plpgsql;
@@ -1215,20 +1050,16 @@ $test$ language plpgsql;
 create or replace function test_users_function_changeemail_fails_with_wrong_password()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
-		loggedincur		refcursor;
-		newuser			text;
-		newemail		text;
-		user1			text;
 		session1		text;
-	begin
-		select into newusercur new_test_users();
-		select into loggedincur logged_in_test_users();
-		fetch from newusercur into newuser, newemail;
-		fetch from loggedincur into user1, session1;
+		newuseremail	text;
+	begin 
+		select into session1 loggedinsession
+			from get_logged_in_test_user();
+		select into newuseremail newemail
+			from get_new_test_user();
 		return next throws_ok(
 			$$select users.change_email('$$ || session1 || $$',
-				'$$ || newemail || $$', 'wrong')$$,
+				'$$ || newuseremail || $$', 'wrong')$$,
 			'P0001', 'Password was incorrect',
 			'Must use correct password to change email.');
 	end;
@@ -1249,26 +1080,25 @@ $test$ language plpgsql;
 create or replace function test_users_function_validateemail_changes_email()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
-		loggedincur		refcursor;
-		newuser			text;
-		newemail		text;
 		user1			text;
+		password1		text;
 		session1		text;
+		newuseremail	text;
 		thelink			uuid;
 		theemail		text;
-	begin
-		select into newusercur new_test_users();
-		select into loggedincur logged_in_test_users();
-		fetch from newusercur into newuser, newemail;
-		fetch from loggedincur into user1, session1;
+	begin 
+		select into user1, password1, session1 
+			loggedinusername, loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
+		select into newuseremail newemail
+			from get_new_test_user();
 		select into theemail, thelink emailaddr, validlink
-			from users.change_email(session1, newemail, user1);
+			from users.change_email(session1, newuseremail, password1);
 		perform users.validate_email(thelink);
 		return next results_eq(
 			$$select email from users.user 
 				where name = lower('$$ || user1 || $$')$$,
-			$$values ('$$ || newemail || $$')$$,
+			$$values ('$$ || newuseremail || $$')$$,
 			'Email validate should update the users email address.');
 		return next is_empty(
 			$$select * from users.validate_email
@@ -1280,28 +1110,23 @@ $test$ language plpgsql;
 create or replace function test_users_function_validateemail_expires_old()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
-		loggedincur		refcursor;
-		newuser			text;
-		newemail		text;
 		user1			text;
+		password1		text;
 		session1		text;
-		user2			text;
-		session2		text;
+		newemail1		text;
 		thelink			uuid;
-		theemail		text;
 	begin
-		select into newusercur new_test_users();
-		select into loggedincur logged_in_test_users();
-		fetch from newusercur into newuser, newemail;
-		fetch from loggedincur into user1, session1;
-		fetch from loggedincur into user2, session2;
-		select into theemail, thelink emailaddr, validlink
-			from users.change_email(session1, newemail, user1);
+		select into user1, password1, session1
+			loggedinusername, loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
+		select into newemail1 newemail
+			from get_new_test_user();
+		select into thelink validlink
+			from users.change_email(session1, newemail1, password1);
 		update users.validate_email 
 			set expire = now() - interval '1 day'
 			where link = thelink;
-		perform users.change_password(session2, 'password', user2);
+		perform users.change_password(session1, 'password', password1);
 		return next is_empty(
 			$$select * from users.validate_email
 				where link = '$$ || thelink || $$'$$,
@@ -1324,14 +1149,13 @@ $test$ language plpgsql;
 create or replace function test_users_function_retrieveuserrequest_returns_link()
 returns setof text as $test$
 	declare
-		activeusercur		refcursor;
 		user1				text;
 		email1				text;
 		theemail			text;
 		thelink				uuid;
 	begin
-		select into activeusercur active_test_users();
-		fetch from activeusercur into user1, email1;
+		select into user1, email1 loggedoutusername, loggedoutemail
+			from get_logged_out_test_user();
 		select into theemail, thelink useremail, userlink
 			from users.retrieve_user_request(email1);
 		return next is(email1, theemail,
@@ -1348,12 +1172,9 @@ $test$ language plpgsql;
 create or replace function test_users_function_retrieveuserrequest_fails_bad_email()
 returns setof text as $test$
 	declare
-		newusercur		refcursor;
-		user1			text;
 		email1			text;
 	begin
-		select into newusercur new_test_users();
-		fetch from newusercur into user1, email1;
+		select into email1 newemail from get_new_test_user();
 		return next throws_ok(
 			$$select users.retrieve_user_request('$$ || email1 || $$')$$,
 			'P0001', 'Email does not exist.',
@@ -1376,17 +1197,15 @@ $test$ language plpgsql;
 create or replace function test_users_function_retrieveuser_returns_data()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
 		email1				text;
-		theemail			text;
 		thelink				uuid;
 		retname				text;
 		retpasswd			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1, email1;
-		select into theemail, thelink useremail, userlink
+		select into user1, email1 loggedoutusername, loggedoutemail
+			from get_logged_out_test_user();
+		select into thelink userlink
 			from users.retrieve_user_request(email1);
 		select into retname, retpasswd username, userpassword
 			from users.retrieve_user(thelink);
@@ -1402,14 +1221,17 @@ $test$ language plpgsql;
 create or replace function test_users_function_login_removes_retrival()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
+		password1			text;
 		email1				text;
+		session1			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1, email1;
+		select into user1, password1, email1
+			loggedoutusername, loggedoutpassword, loggedoutemail
+			from get_logged_out_test_user();
+		select into session1 sess_id from create_test_session();
 		perform users.retrieve_user_request(email1);
-		perform users.login('web-session-1', user1, user1);
+		perform users.login(session1, user1, password1);
 		return next is_empty(
 			$$select * 
 				from users.user, 
@@ -1423,24 +1245,22 @@ $test$ language plpgsql;
 create or replace function test_users_function_expire_retrieval_requests()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
-		loggedincur			refcursor;
 		user1				text;
 		email1				text;
-		user2				text;
+		password2			text;
 		sessid2				text;
 		thelink				uuid;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1, email1;
-		select into loggedincur logged_in_test_users();
-		fetch from loggedincur into user2, sessid2;
+		select into user1, email1 loggedoutusername, loggedoutemail
+			from get_logged_out_test_user();
+		select into password2, sessid2 loggedinpassword, loggedinsession
+			from get_logged_in_test_user();
 		select into thelink userlink
 			from users.retrieve_user_request(email1);
 		update users.validate_request
 			set expire = now() - interval '1 day'
 			where link = thelink;
-		perform users.change_password(sessid2, 'password', user2);
+		perform users.change_password(sessid2, 'password', password2);
 		return next is_empty(
 			$$select * from users.validate_request
 				where link = '$$ || thelink || $$'$$,
@@ -1463,7 +1283,7 @@ create or replace function test_users_function_getuser_returns_anon_for_bad_sess
 returns setof text as $test$
 	begin
 		return next results_eq(
-			$$select users.get_user('bad_session_id')$$,
+			$$select users.get_user(new_session_id())$$,
 			$$values ('anonymous')$$,
 			'Bad session ids should return the anonymous user.');
 	end;
@@ -1472,28 +1292,29 @@ $test$ language plpgsql;
 create or replace function test_users_function_getuser_returns_user_name()
 returns setof text as $test$
 	declare
-		loggedoutcur		refcursor;
 		user1				text;
-		email1				text;
+		password1			text;
+		session1			text;
 	begin
-		select into loggedoutcur logged_out_test_users();
-		fetch from loggedoutcur into user1, email1;
+		select into user1, password1 loggedoutusername, loggedoutpassword
+			from get_logged_out_test_user();
+		select into session1 sess_id from create_test_session();
 		return next results_eq(
-			$$select users.get_user('web-session-1')$$,
+			$$select users.get_user('$$ || session1 || $$')$$,
 			$$select users.user.name
 				from users.user,
 					web.session
 				where users.user.id = web.session.user_id
-					and web.session.sess_id = 'web-session-1'$$,
+					and web.session.sess_id = '$$ || session1 || $$'$$,
 			'Get user should return anonymous before the user logs in.');
-		perform users.login('web-session-1', user1, user1);
+		perform users.login(session1, user1, password1);
 		return next results_eq(
-			$$select users.get_user('web-session-1')$$,
+			$$select users.get_user('$$ || session1 || $$')$$,
 			$$select users.user.name
 				from users.user,
 					web.session
 				where users.user.id = web.session.user_id
-					and web.session.sess_id = 'web-session-1'$$,
+					and web.session.sess_id = '$$ || session1 || $$'$$,
 			'Get user should always show the logged in user.');
 	end;
 $test$ language plpgsql;
@@ -1505,36 +1326,6 @@ returns setof text as $func$
 			create schema users;
 			return next 'Created users schema';
 		end if;
-
-		if failed_test('test_users_table_testusers_exists') then 
-			create table users.test_user();
-			return next 'Created the test users table.';
-		end if;
-		if failed_test('test_users_table_testusers_column_name_exists') then
-			alter table users.test_user
-				add column name text;
-			return next 'Added the user name column to test users.';
-		end if;
-		if failed_test('test_users_table_testuser_column_name_is_text') then
-			alter table users.test_user
-				alter column name type text;
-			return next 'Altered test user name to text.';
-		end if;  
-		if failed_test('test_users_table_testuser_column_name_is_pk') then
-			alter table users.test_user
-				add primary key (name);
-			return next 'Added the primary key to test users.';
-		end if;  
-		if failed_test('test_users_table_testusers_column_email_exists') then
-			alter table users.test_user
-				add column email text;
-			return next 'Added the user email column to test users.';
-		end if;
-		if failed_test('test_users_table_testuser_column_email_is_text') then
-			alter table users.test_user
-				alter column email type text;
-			return next 'Altered test user email to text.';
-		end if;  
 
 		if failed_test('test_users_user_exists') then
 			create table users.user();

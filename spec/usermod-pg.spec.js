@@ -37,24 +37,7 @@ function pgConnect (callback) {
 
 describe('usermod', function () {
 	beforeEach(function () {
-		// Setup the database.
-		var doneit = false;
-		rootConnect(function (client) {
-			client.query('select setup_10_web(); select startup_20_users()',
-				function (err, result) {
-					if (err) {
-						console.log(JSON.stringify(err));
-					}
-					doneit = true;
-				}
-			);
-		});
-		waitsFor(function () {
-			return doneit;
-		}, 'Setting up the database.', 10000);
-		runs(function () {
-			this.users = new UserMod(function () {});
-		});
+		this.users = new UserMod(pgConnect);
 	});
 	
 	describe('constructor', function () {
@@ -79,6 +62,73 @@ describe('usermod', function () {
 		it('should have a get user function', function () {
 			expect(typeof this.users.getUser).toEqual('function');
 		});
+		
+		it('should return anonymous when not logged in', function () {
+			var sessionid;
+			var username;
+			rootConnect(function (client) {
+				client.query('select create_test_session()',
+						function (err, result) {
+					if (err) {
+						console.log(JSON.stringify(err));
+					}
+					sessionid = result.rows[0].create_test_session.replace(/^\(/, '').split(',')[0];
+				});
+			});
+			waitsFor(function () {return sessionid;}, 
+					'test session to be created', 10000);
+			runs(function () {
+				this.users.getUser(sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 
+						'getUser to return', 10000);
+				runs(function () {
+					expect(username).toEqual('anonymous');
+					rootConnect(function (client) {
+						client.query('delete from web.session ' +
+								'where sess_id = $1', [sessionid]);
+					});
+				});
+			});
+		});
+		
+		it('should return the user name for used sessions', function () {
+			var holder;
+			var username;
+			var sessionid;
+			rootConnect(function (client) {
+				client.query('select get_logged_in_test_user()',
+						function (err, result) {
+					if (err) {
+						console.log(JSON.stringify(err));
+					}
+					holder = result.rows[0].get_logged_in_test_user;
+					holder = holder.replace(/^\(/, '');
+					holder = holder.replace(/\)$/, '');
+					holder = holder.split(',');
+					sessionid = holder[3];
+					username = holder[0];
+				});
+			});
+			waitsFor(function () {return username;},
+					'logged in user', 10000);
+			runs(function () {
+				holder = null;
+				this.users.getUser(sessionid, function (err, result) {
+					holder = result;
+				});
+				waitsFor(function () {return holder;},
+						'getUser', 10000);
+				runs(function () {
+					expect(holder).toEqual(username);
+					rootConnect(function (client) {
+						client.query('delete from users.user ' +
+								'where name = $1', [username]);
+					});
+				});
+			});
+		});
 	});
 	
 	describe('login', function () {
@@ -87,9 +137,57 @@ describe('usermod', function () {
 		});
 	});
 	
+	describe('logout', function () {
+		it('should have a logout function', function () {
+			expect(typeof this.users.logout).toEqual('function');
+		});
+	});
+	
 	describe('add user', function () {
 		it('should have an add user function', function () {
 			expect(typeof this.users.addUser).toEqual('function');
+		});
+	});
+	
+	describe('validate new user', function () {
+		it('should have a validate new user function', function () {
+			expect(typeof this.users.validateUser).toEqual('function');
+		});
+	});
+	
+	describe('change user name', function () {
+		it('should have a change user name function', function () {
+			expect(typeof this.users.changeName).toEqual('function');
+		});
+	});
+	
+	describe('change password', function () {
+		it('should have a change user password function', function () {
+			expect(typeof this.users.changePassword).toEqual('function');
+		});
+	});
+	
+	describe('change email', function () {
+		it('should have a change user email function', function () {
+			expect(typeof this.users.changeEmail).toEqual('function');
+		});
+	});
+	
+	describe('validate email', function () {
+		it('should have a validate new user email', function () {
+			expect(typeof this.users.validateEmail).toEqual('function');
+		});
+	});
+	
+	describe('retrieve user request', function () {
+		it('should have a retrieve user name and password request function', function () {
+			expect(typeof this.users.retrieveUserRequest).toEqual('function');
+		});
+	});
+
+	describe('retrieve user', function () {
+		it('should have a retrieve user name and password function ', function () {
+			expect(typeof this.users.retrieveUser).toEqual('function');
 		});
 	});
 });
