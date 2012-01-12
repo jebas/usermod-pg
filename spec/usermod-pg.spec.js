@@ -1,43 +1,110 @@
 /**
  * User Module JavaScript Test file.
  * 
- * Will need two database logins for testing.
- * The first login will needs to access the database test scripts.
- * The second will be the tested nodepg user.
+ * Create a connection.js file in the spec directory.
+ * In that file place the connection functions for 
+ * the database super user and nodepg.  This file is 
+ * ignored by git so it not part of the repository.
+ *   
+ * It should look similar to the following: 
+ * 
+ * var pg = require('pg');
+ *
+ * var connect = module.exports = function () {};
+ * 
+ * connect.prototype.root = function (callback) {
+ * 	pg.connect('tcp://postgres:secret@localhost/pgstore',
+ * 		function (err, client) {
+ * 			if (err) {
+ * 				console.log(JSON.stringify(err));
+ * 			}
+ * 			if (client) {
+ * 				callback(client);
+ * 			}
+ * 		}
+ * 	);
+ * };
+ * 
+ * connect.prototype.nodepg= function (callback) {
+ * 	pg.connect('tcp://nodepg:password@localhost/pgstore',
+ * 		function (err, client) {
+ * 			if (err) {
+ * 				console.log(JSON.stringify(err));
+ * 			}
+ * 			if (client) {
+ * 				callback(client);
+ * 			}
+ * 		}
+ * 	);
+ * };
  */
 
 var UserMod = require('../');
-var pg = require('pg');
+var connection = require('./connection');
 
-function rootConnect (callback) {
-	pg.connect('tcp://jeff:tester@localhost/pgstore',
-		function (err, client) {
-			if (err) {
-				console.log(JSON.stringify(err));
-			}
-			if (client) {
-				callback(client);
-			}
-		}
-	);
-};
-
-function pgConnect (callback) {
-	pg.connect('tcp://nodepg:password@localhost/pgstore',
-		function (err, client) {
-			if (err) {
-				console.log(JSON.stringify(err));
-			}
-			if (client) {
-				callback(client);
-			}
-		}
-	);
-};
+var connect = new connection();
 
 describe('usermod', function () {
 	beforeEach(function () {
-		this.users = new UserMod(pgConnect);
+		var sessionid;
+		var loggedOutUser;
+		var loggedInUser;
+		this.users = new UserMod(connect.nodepg);
+		connect.root(function (client) {
+			client.query('select sess_id from create_test_session()',
+					function (err, result) {
+				if (err) {
+					console.log(JSON.stringify(err));
+				}
+				sessionid = result.rows[0].sess_id;
+			});
+			client.query('select * from get_logged_out_test_user()', 
+					function (err, result) {
+				if (err) {
+					console.log(JSON.stringify(err));
+				}
+				loggedOutUser = {
+					'name': result.rows[0].loggedoutusername,
+					'password': result.rows[0].loggedoutpassword,
+					'email': result.rows[0].loggedoutemail
+				};
+			});
+			client.query('select * from get_logged_in_test_user()', 
+					function (err, result) {
+				if (err) {
+					console.log(JSON.stringify(err));
+				}
+				loggedInUser = {
+					'name': result.rows[0].loggedinusername,
+					'password': result.rows[0].loggedinpassword,
+					'email': result.rows[0].loggedinemail,
+					'sessionid': result.rows[0].loggedinsession
+				};
+			});
+		});
+		waitsFor(function () {
+			return sessionid && loggedOutUser && loggedInUser;
+			}, 
+				'session setup', 10000);
+		runs(function () {
+			this.sessionid = sessionid;
+			this.loggedOutUser = loggedOutUser;
+			this.loggedInUser = loggedInUser;
+		});
+	});
+	
+	afterEach(function () {
+		var sessionid = this.sessionid;
+		var loggedOutUser = this.loggedOutUser;
+		var loggedInUser = this.loggedInUser;
+		connect.root(function (client) {
+			client.query('delete from web.session ' +
+					'where sess_id = $1', [sessionid]);
+			client.query('delete from users.user ' +
+					'where name = $1', [loggedOutUser.name]);
+			client.query('delete from users.user ' +
+					'where name = $1', [loggedInUser.name]);
+		});
 	});
 	
 	describe('constructor', function () {
@@ -64,69 +131,27 @@ describe('usermod', function () {
 		});
 		
 		it('should return anonymous when not logged in', function () {
-			var sessionid;
+			var sessionid = this.sessionid;
 			var username;
-			rootConnect(function (client) {
-				client.query('select create_test_session()',
-						function (err, result) {
-					if (err) {
-						console.log(JSON.stringify(err));
-					}
-					sessionid = result.rows[0].create_test_session.replace(/^\(/, '').split(',')[0];
-				});
+			this.users.getUser(sessionid, function (err, result) {
+				username = result;
 			});
-			waitsFor(function () {return sessionid;}, 
-					'test session to be created', 10000);
+			waitsFor(function () {return username;}, 
+					'getUser to return', 10000);
 			runs(function () {
-				this.users.getUser(sessionid, function (err, result) {
-					username = result;
-				});
-				waitsFor(function () {return username;}, 
-						'getUser to return', 10000);
-				runs(function () {
-					expect(username).toEqual('anonymous');
-					rootConnect(function (client) {
-						client.query('delete from web.session ' +
-								'where sess_id = $1', [sessionid]);
-					});
-				});
+				expect(username).toEqual('anonymous');
 			});
 		});
 		
 		it('should return the user name for used sessions', function () {
-			var holder;
 			var username;
-			var sessionid;
-			rootConnect(function (client) {
-				client.query('select get_logged_in_test_user()',
-						function (err, result) {
-					if (err) {
-						console.log(JSON.stringify(err));
-					}
-					holder = result.rows[0].get_logged_in_test_user;
-					holder = holder.replace(/^\(/, '');
-					holder = holder.replace(/\)$/, '');
-					holder = holder.split(',');
-					sessionid = holder[3];
-					username = holder[0];
-				});
+			this.users.getUser(this.loggedInUser.sessionid, function (err, result) {
+				username = result;
 			});
-			waitsFor(function () {return username;},
-					'logged in user', 10000);
+			waitsFor(function () {return username;}, 
+					'getUser', 10000);
 			runs(function () {
-				holder = null;
-				this.users.getUser(sessionid, function (err, result) {
-					holder = result;
-				});
-				waitsFor(function () {return holder;},
-						'getUser', 10000);
-				runs(function () {
-					expect(holder).toEqual(username);
-					rootConnect(function (client) {
-						client.query('delete from users.user ' +
-								'where name = $1', [username]);
-					});
-				});
+				expect(username).toEqual(this.loggedInUser.name);
 			});
 		});
 	});
@@ -134,6 +159,35 @@ describe('usermod', function () {
 	describe('login', function () {
 		it('should have a login function', function () {
 			expect(typeof this.users.login).toEqual('function');
+		});
+		
+		it('should allow the user to log in', function () {
+			var loggedIn;
+			var theError;
+			this.users.login(this.sessionid, this.loggedOutUser.name,
+					this.loggedOutUser.password, function (err, result) {
+				loggedIn = result;
+				theError = err;
+			});
+			waitsFor(function () {return loggedIn;}, 
+					'login', 10000);
+			runs(function () {
+				expect(theError).toBeNull();
+				expect(loggedIn).toBeTruthy();
+				var username;
+				this.users.getUser(this.sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 
+						'getUser', 10000);
+				runs(function () {
+					expect(username).toEqual(this.loggedOutUser.name);
+				});
+			});
+		});
+		
+		it('should error on failed login', function () {
+			
 		});
 	});
 	

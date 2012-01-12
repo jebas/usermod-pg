@@ -2,3 +2,4 @@
 .settings
 pgtap.sql
 /node_modules
+/spec/connection.js
