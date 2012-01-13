@@ -187,7 +187,28 @@ describe('usermod', function () {
 		});
 		
 		it('should error on failed login', function () {
-			
+			var loggedIn;
+			var theError;
+			this.users.login(this.sessionid, this.loggedOutUser.name,
+					'wrong', function (err, result) {
+				loggedIn = result;
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 
+					'login', 10000);
+			runs(function () {
+				expect(loggedIn).toBeNull();
+				expect(theError).toEqual('Invalid User Name or Password.');
+				var username;
+				this.users.getUser(this.sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 
+						'getUser', 10000);
+				runs(function () {
+					expect(username).toEqual('anonymous');
+				});
+			});
 		});
 	});
 	
