@@ -47,6 +47,8 @@ var connect = new connection();
 describe('usermod', function () {
 	beforeEach(function () {
 		var sessionid;
+		var newUser;
+		var inactiveUser;
 		var loggedOutUser;
 		var loggedInUser;
 		this.users = new UserMod(connect.nodepg);
@@ -57,6 +59,23 @@ describe('usermod', function () {
 					console.log(JSON.stringify(err));
 				}
 				sessionid = result.rows[0].sess_id;
+			});
+			client.query('select * from get_new_test_user()', 
+					function (err, result) {
+				newUser = {
+					'name': result.rows[0].newusername,
+					'password': result.rows[0].newpassword,
+					'email': result.rows[0].newemail
+				};
+			});
+			client.query('select * from get_inactive_test_user()', 
+					function (err, result) {
+				inactiveUser = {
+					'name': result.rows[0].inactiveusername,
+					'password': result.rows[0].inactivepassword,
+					'email': result.rows[0].inactiveemail,
+					'link': result.rows[0].validationlink
+				};
 			});
 			client.query('select * from get_logged_out_test_user()', 
 					function (err, result) {
@@ -83,11 +102,13 @@ describe('usermod', function () {
 			});
 		});
 		waitsFor(function () {
-			return sessionid && loggedOutUser && loggedInUser;
-			}, 
-				'session setup', 10000);
+			return newUser && sessionid && inactiveUser && 
+				loggedOutUser && loggedInUser;
+			}, 'session setup', 10000);
 		runs(function () {
 			this.sessionid = sessionid;
+			this.newUser = newUser;
+			this.inactiveUser = inactiveUser;
 			this.loggedOutUser = loggedOutUser;
 			this.loggedInUser = loggedInUser;
 		});
@@ -95,11 +116,17 @@ describe('usermod', function () {
 	
 	afterEach(function () {
 		var sessionid = this.sessionid;
+		var newUser = this.newUser;
+		var inactiveUser = this.inactiveUser;
 		var loggedOutUser = this.loggedOutUser;
 		var loggedInUser = this.loggedInUser;
 		connect.root(function (client) {
 			client.query('delete from web.session ' +
 					'where sess_id = $1', [sessionid]);
+			client.query('delete from users.user ' +
+					'where name = $1', [newUser.name]);
+			client.query('delete from users.user ' +
+					'where name = $1', [inactiveUser.name]);
 			client.query('delete from users.user ' +
 					'where name = $1', [loggedOutUser.name]);
 			client.query('delete from users.user ' +
@@ -210,23 +237,128 @@ describe('usermod', function () {
 				});
 			});
 		});
+		
+		it('should not allow inactive users to log in', function () {
+			var loggedIn;
+			var theError;
+			this.users.login(this.sessionid, this.inactiveUser.name,
+					this.inactiveUser.password, function (err, result) {
+				loggedIn = result;
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 
+					'login', 10000);
+			runs(function () {
+				expect(loggedIn).toBeNull();
+				expect(theError).toEqual('Invalid User Name or Password.');
+				var username;
+				this.users.getUser(this.sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 
+						'getUser', 10000);
+				runs(function () {
+					expect(username).toEqual('anonymous');
+				});
+			});
+		});
 	});
 	
 	describe('logout', function () {
 		it('should have a logout function', function () {
 			expect(typeof this.users.logout).toEqual('function');
 		});
-	});
-	
-	describe('add user', function () {
-		it('should have an add user function', function () {
-			expect(typeof this.users.addUser).toEqual('function');
+		
+		it('should set the session back to anonymous', function () {
+			var loggedout;
+			var theError;
+			this.users.logout(this.loggedInUser.sessionid, function (err, result) {
+				theError = err;
+				loggedout = result;
+			});
+			waitsFor(function () {return loggedout;}, 'logout', 10000);
+			runs(function () {
+				expect(theError).toBeNull();
+				expect(loggedout).toBeTruthy();
+				var username;
+				this.users.getUser(this.loggedInUser.sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 'getUser', 10000);
+				runs(function () {
+					expect(username).toEqual('anonymous');
+				});
+			});
 		});
 	});
 	
-	describe('validate new user', function () {
+	describe('adding a user', function () {
+		it('should have an add user function', function () {
+			expect(typeof this.users.addUser).toEqual('function');
+		});
+
 		it('should have a validate new user function', function () {
 			expect(typeof this.users.validateUser).toEqual('function');
+		});
+		
+		it('should create a new user', function () {
+			var username;
+			var useremail;
+			var validlink;
+			this.users.addUser(this.newUser.name, this.newUser.password,
+					this.newUser.email, function (err, result) {
+				useremail = result.email;
+				validlink = result.link;
+			});
+			waitsFor(function () {return useremail && validlink;}, 'addUser',
+					10000);
+			runs(function () {
+				expect(useremail).toEqual(this.newUser.email);
+				this.users.validateUser(validlink, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 
+						'validateUser', 10000);
+				runs(function () {
+					expect(username).toEqual(this.newUser.name);
+					var loggedin;
+					this.users.login(this.sessionid, this.newUser.name, 
+							this.newUser.password, function (err, result) {
+						loggedin = result;
+					});
+					waitsFor(function () {return loggedin;}, 'login',
+							10000);
+					runs(function () {
+						expect(loggedin).toBeTruthy();
+					});
+				});
+			});
+		});
+		
+		it('should return an error when it fails to add user', function () {
+			var theResult;
+			var error;  
+			this.users.addUser(this.newUser.name, 'four',
+					this.newUser.email, function (err, result) {
+				theResult = result;
+				error = err;
+			});
+			waitsFor(function () {return error;}, 'addUser', 10000);
+			runs(function () {
+				expect(theResult).toBeNull();
+				expect(typeof error).toEqual('object');
+			});
+		});
+		
+		it('should return an error for validating non-uuid links', function () {
+			var theError;
+			this.users.validateUser('fred', function (err, result) {
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 'validateUser', 10000);
+			runs(function () {
+				expect(typeof theError).toEqual('object');
+			});
 		});
 	});
 	

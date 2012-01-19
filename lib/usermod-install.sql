@@ -1613,7 +1613,7 @@ returns setof text as $func$
 					values (new_uid, username, 
 						public.crypt(passwd, 
 							public.gen_salt('bf')), 
-						useremail);
+							useremail);
 				insert into users.validate (link, user_id) values
 					(validlink, new_uid);
 			end;
