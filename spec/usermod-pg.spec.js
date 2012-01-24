@@ -366,35 +366,140 @@ describe('usermod', function () {
 		it('should have a change user name function', function () {
 			expect(typeof this.users.changeName).toEqual('function');
 		});
+		
+		it('should change the name of the user', function () {
+			var nameChanged;
+			this.users.changeName(this.loggedInUser.sessionid, this.newUser.name,
+					this.loggedInUser.password, function (err, result) {
+				nameChanged = result;
+			});
+			waitsFor(function () {return nameChanged;}, 'changeName', 10000);
+			runs(function () {
+				var username;
+				this.users.getUser(this.loggedInUser.sessionid, function (err, result) {
+					username = result;
+				});
+				waitsFor(function () {return username;}, 'getUser', 10000);
+				runs(function () {
+					expect(username).toEqual(this.newUser.name);
+				});
+			});
+		});
+		
+		it('should return an error for failures', function () {
+			var nameChanged;
+			var theError;
+			this.users.changeName(this.loggedInUser.sessionid, this.newUser.name,
+					'wrong', function (err, result) {
+				theError = err;
+				nameChanged = result;
+			});
+			waitsFor(function () {return theError;}, 'changeName', 10000);
+			runs(function () {
+				expect(typeof theError).toEqual('object');
+			});
+		});
 	});
 	
 	describe('change password', function () {
 		it('should have a change user password function', function () {
 			expect(typeof this.users.changePassword).toEqual('function');
 		});
-	});
-	
-	describe('change email', function () {
-		it('should have a change user email function', function () {
-			expect(typeof this.users.changeEmail).toEqual('function');
+		
+		it('should allow the user to set a new password', function () {
+			var passwordChanged;
+			this.users.changePassword(this.loggedInUser.sessionid, 'password',
+					this.loggedInUser.password, function (err, result) {
+				passwordChanged = true;
+			});
+			waitsFor(function () {return passwordChanged;}, 'changePassword', 10000);
+			runs(function () {
+				var loggedOut;
+				this.users.logout(this.loggedInUser.sessionid, function () {
+					loggedOut = true;
+				});
+				waitsFor(function () {return loggedOut;}, 'logout', 10000);
+				runs(function() {
+					var loggedIn;
+					var theError;
+					this.users.login(this.sessionid, this.loggedInUser.name, 'password',
+							function (err, result) {
+						loggedIn = true;
+						theError = err;
+					});
+					waitsFor(function () {return loggedIn;}, 'login', 10000);
+					runs(function () {
+						expect(theError).toBeNull();
+					});
+				});
+			});
+		});
+		
+		it('should return an err for failed password change', function () {
+			var theError;
+			var passwordChanged;
+			this.users.changePassword(this.loggedInUser.sessionid, 'password',
+					'password', function (err, result) {
+				theError = err;
+				passwordChanged = true;
+			});
+			waitsFor(function () {return passwordChanged;}, 'passwordChange', 10000);
+			runs(function () {
+				expect(theError).toBeTruthy();
+			});
 		});
 	});
 	
-	describe('validate email', function () {
-		it('should have a validate new user email', function () {
-			expect(typeof this.users.validateEmail).toEqual('function');
-		});
-	});
-	
-	describe('retrieve user request', function () {
+	describe('retrieve user', function () {
 		it('should have a retrieve user name and password request function', function () {
 			expect(typeof this.users.retrieveUserRequest).toEqual('function');
 		});
-	});
 
-	describe('retrieve user', function () {
 		it('should have a retrieve user name and password function ', function () {
 			expect(typeof this.users.retrieveUser).toEqual('function');
+		});
+		
+		it('should give the user a new password', function () {
+			var email;
+			var link;
+			this.users.retrieveUserRequest(this.loggedOutUser.email, 
+					function (err, result) {
+				email = result.email;
+				link = result.link;
+			});
+			waitsFor(function() {return email && link;}, 'retrieveUserRequest', 10000);
+			runs(function () {
+				expect(email).toEqual(this.loggedOutUser.email);
+				var username;
+				var password;
+				this.users.retrieveUser(link, function (err, result) {
+					username = result.username;
+					password = result.password;
+				});
+				waitsFor(function () {return username && password;}, 'retrieveUser', 10000);
+				runs(function () {
+					expect(username).toEqual(this.loggedOutUser.name);
+					var loggedIn;
+					this.users.login(this.sessionid, this.loggedOutUser.name, password,
+							function (err, result) {
+						loggedIn = result;
+					});
+					waitsFor(function () {return loggedIn;}, 'login', 10000);
+					runs(function () {
+						expect(loggedIn).toBeTruthy();
+					});
+				});
+			});
+		});
+	});
+
+	describe('change user email', function () {
+		it('should have a change user email function', function () {
+			expect(typeof this.users.changeEmail).toEqual('function');
+		});
+
+		it('should have a validate new user email', function () {
+			expect(typeof this.users.validateEmail).toEqual('function');
 		});
 	});
 });

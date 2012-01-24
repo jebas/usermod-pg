@@ -36,6 +36,7 @@ releasing the information outside of the database.
 	<tr>
 		<td>Change User Name</td>
 		<td>done</td>
+		<td>done</td>
 	</tr>
 	<tr>
 		<td>Change User Password</td>
