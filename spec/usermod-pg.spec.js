@@ -491,6 +491,28 @@ describe('usermod', function () {
 				});
 			});
 		});
+		
+		it('should send an error if the email is invalid upon request', function () {
+			var theError;
+			this.users.retrieveUserRequest(this.newUser.email, function (err, result) {
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 'retrieveUserRequest', 10000);
+			runs(function () {
+				expect(theError).toBeTruthy();
+			});
+		});
+		
+		it('should send an error if the link is not a uuid', function () {
+			var theError;
+			this.users.retrieveUser('fred', function (err, result) {
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 'retrieveUser', 10000);
+			runs(function () {
+				expect(theError).toBeTruthy();
+			});
+		});
 	});
 
 	describe('change user email', function () {
@@ -500,6 +522,63 @@ describe('usermod', function () {
 
 		it('should have a validate new user email', function () {
 			expect(typeof this.users.validateEmail).toEqual('function');
+		});
+		
+		it('should allow the user to change email addresses', function () {
+			var email;
+			var link;
+			this.users.changeEmail(this.loggedInUser.sessionid, this.newUser.email,
+					this.loggedInUser.password, function (err, result) {
+				email = result.email;
+				link = result.link;
+			});
+			waitsFor(function () {return email && link;}, 'changeEmail', 10000);
+			runs(function () {
+				expect(email).toEqual(this.newUser.email);
+				var validated;
+				this.users.validateEmail(link, function (err, result) {
+					validated = true;
+				});
+				waitsFor(function () {return validated;}, 'validateEmail', 10000);
+				runs(function () {
+					var username = this.loggedInUser.name;
+					var email;
+					connect.root(function (client) {
+						client.query('select email from users.user ' +
+								'where users.user.name = $1', [username],
+								function (err, result) {
+							email = result.rows[0].email;
+						});
+					});
+					waitsFor(function () {return email;}, 'email query', 10000);
+					runs(function () {
+						expect(email).toEqual(this.newUser.email);
+					});
+				});
+			});
+		});
+		
+		it('should produce an error if change email fails', function () {
+			var theError;
+			this.users.changeEmail(this.loggedInUser.sessionid, this.newUser.email,
+					'wrong', function (err, result) {
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 'change email', 10000);
+			runs(function () {
+				expect(theError).toBeTruthy();
+			});
+		});
+		
+		it('should produce an error if email validation link is not a uuid', function () {
+			var theError;
+			this.users.validateEmail('fred', function (err, result) {
+				theError = err;
+			});
+			waitsFor(function () {return theError;}, 'validateEmail', 10000);
+			runs(function () {
+				expect(theError).toBeTruthy();
+			});
 		});
 	});
 });

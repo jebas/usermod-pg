@@ -41,19 +41,26 @@ releasing the information outside of the database.
 	<tr>
 		<td>Change User Password</td>
 		<td>done</td>
+		<td>done</td>
 	</tr>
 	<tr> 
 		<td>Change User Email</td>
 		<td>done</td>
+		<td>done</td>
 	</tr>
+	<tr>
 		<td>Validate New User Email</td>
 		<td>done</td>
+		<td>done</td>
+	</tr>
 	<tr>
 		<td>User name and password retrieval request</td>
+		<td>done</td>
 		<td>done</td>
 	</tr>
 	<tr>
 		<td>User name and password retrieval</td>
+		<td>done</td>
 		<td>done</td>
 	</tr>
 </table>
