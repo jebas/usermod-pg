@@ -2,13 +2,17 @@
   "author": "Jeff Baskin <jeff.l.baskin@gmail.com>",
   "name": "usermod-pg",
   "description": "User access module linked to connect-pg",
-  "version": "1.0.0",
+  "keywords": ["pg", "connect", "postgres", "postgresql", "express"],
+  "version": "1.0.1",
   "homepage": "https://github.com/jebas/usermod-pg",
   "repository": {
     "type": "git",
     "url": "git://github.com/jebas/usermod-pg.git"
   },
-  "dependencies": {},
+  "dependencies": {
+      "pg": ">= 0.5.0",
+      "connect-pg": ">= 1.1.0"
+   },
   "devDependencies": {},
   "optionalDependencies": {},
   "engines": {
