@@ -1,0 +1,17 @@
+{
+  "author": "Jeff Baskin <jeff.l.baskin@gmail.com>",
+  "name": "usermod-pg",
+  "description": "User access module linked to connect-pg",
+  "version": "1.0.0",
+  "homepage": "https://github.com/jebas/usermod-pg",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/jebas/usermod-pg.git"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "optionalDependencies": {},
+  "engines": {
+    "node": "*"
+  }
+}
