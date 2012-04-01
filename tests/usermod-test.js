@@ -28,15 +28,84 @@ function rootQuery (query, values) {
 
 buster.testCase('userMod', {
 	'setUp': function () {
+		var usedSessions = [];
+		var testUsers = [];
 		this.users = new userMod(connNode);
+
+		this.getSession = function () {
+			var deferred = when.defer();
+			when(rootQuery('select sess_id from create_test_session()'),
+				function (row) {
+					usedSessions.push(row['sess_id']);
+					deferred.resolver.resolve(row['sess_id']);
+				}
+			);
+			return deferred.promise;
+		};
+		
+		this.getLoggedOutUser = function () {
+			var deferred = when.defer();
+			when(rootQuery('select * from get_logged_out_test_user()'),
+				function (row) {
+					testUsers.push(row['loggedoutusername']);
+					deferred.resolver.resolve({
+						'username':  row['loggedoutusername'],
+						'password':  row['loggedoutpassword'],
+						'email':     row['loggedoutemail']
+					});
+				}
+			);
+			return deferred.promise;
+		};
+		
+		this.getLoggedInUser = function () {
+			var deferred = when.defer();
+			when(rootQuery('select * from get_logged_in_test_user()'),
+				function (row) {
+					testUsers.push(row['loggedinusername']);
+					deferred.resolver.resolve({
+						'username':  row['loggedinusername'],
+						'password':  row['loggedinpassword'],
+						'email':     row['loggedinemail'],
+						'sessionID': row['loggedinsession']
+					});
+				}
+			);
+			return deferred.promise;
+		};
+		
+		this.usedSessions = usedSessions;
+		this.testUsers = testUsers;
+	},
+	'tearDown': function () {
+		var deferreds = [];
+		
+		while (this.usedSessions.length) {
+			deferreds.push(rootQuery(
+					'delete from web.session where sess_id = $1', 
+					[this.usedSessions.pop()]));
+		}
+		while (this.testUsers.length) {
+			deferreds.push(rootQuery(
+					'delete from users.user where name = $1',
+					[this.testUsers.pop()]));
+		}
+		return when.all(deferreds);
 	},
 	'constructor': {
 		'should be a function': function () {
 			assert.typeOf(userMod, 'function', 'Constructor should be a function.');
-		},
-		'//should accept the promise of a client': function () {},
-		'//should accept a client directly': function () {},
-		'//should accept a client string': function () {}
+		}
+	},
+	'testing test': function () {
+		var deferred = when.defer();
+		when(this.getSession(),
+			function (sess_id) {
+				assert(true);
+				deferred.resolver.resolve();
+			}
+		);
+		return deferred.promise;
 	},
 	'getUser': {
 		'should be a function': function () {
@@ -59,50 +128,31 @@ buster.testCase('userMod', {
 		'should return anonymous if logged out': function () {
 			var users = this.users;
 			var deferred = when.defer();
-			var sessionid = '';
-			when(rootQuery('select sess_id from create_test_session()'), 
-				function (row) {
-					sessionid = row['sess_id'];
-					return users.getUser(sessionid);
+			when(this.getSession(),
+				function (sessionID) {
+					return users.getUser(sessionID);
 				}
 			).then(
 				function (user) {
 					assert.equals(user, 'anonymous', 
-							'Undefined session returns anonymous user');
-				}
-			).then(
-				function () {
-					return rootQuery('delete from web.session where sess_id = $1',
-							[sessionid]);
-				}
-			).then(
-				function () {
+						'Undefined session returns anonymous user');
 					deferred.resolver.resolve();
 				}
 			);
 			return deferred.promise;
 		},
 		'should return the logged in user name': function () {
-			var deferred = when.defer();
-			var rowHolder = [];
 			var users = this.users;
-			when(rootQuery('select * from get_logged_in_test_user()'),
-				function (row) {
-					rowHolder = row;
-					return users.getUser(rowHolder['loggedinsession']);
-				}
-			).then(
+			var deferred = when.defer();
+			var userInfo = {};
+			when(this.getLoggedInUser(),
 				function (user) {
-					assert.equals(user, rowHolder['loggedinusername'],
-							'Should return active user name.');
+					userInfo = user;
+					return users.getUser(userInfo.sessionID);
 				}
 			).then(
-				function () {
-					return rootQuery('delete from users.user where name = $1',
-						[rowHolder['loggedinusername']]);
-				}
-			).then(
-				function () {
+				function (username) {
+					assert.equals(username, userInfo.username);
 					deferred.resolver.resolve();
 				}
 			);
@@ -128,6 +178,37 @@ buster.testCase('userMod', {
 		'should be a function': function () {
 			assert.typeOf(this.users.login, 'function',
 					'There should be a login function.');
+		},
+		'should assign the user to a session': function () {
+			var users = this.users;
+			var getLoggedOutUser = this.getLoggedOutUser;
+			var deferred = when.defer();
+			var sessionID = '';
+			var userInfo = {};
+
+			when(this.getSession(),
+				function (sessID) {
+					sessionID = sessID;
+					return getLoggedOutUser();
+				}
+			).then(
+				function (user) {
+					userInfo = user;
+					return users.login(sessionID, userInfo.username,
+							userInfo.password);
+				}
+			).then(
+				function () {
+					return users.getUser(sessionID);
+				}
+			).then(
+				function (name) {
+					assert.equals(name, userInfo.username,
+						'User should be logged in.');
+					deferred.resolver.resolve();
+				}
+			);
+			return deferred.promise;
 		}
 	}
 });
