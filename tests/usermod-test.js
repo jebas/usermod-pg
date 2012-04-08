@@ -1,3 +1,4 @@
+/*
 var buster = require('buster')
   , when = require('when')
   , pg = require('pg')
@@ -38,6 +39,22 @@ buster.testCase('userMod', {
 				function (row) {
 					usedSessions.push(row['sess_id']);
 					deferred.resolver.resolve(row['sess_id']);
+				}
+			);
+			return deferred.promise;
+		};
+		
+		this.getInactiveUser = function () {
+			var deferred = when.defer();
+			when(rootQuery('select * from get_inactive_test_user()'),
+				function (row) {
+					testUsers.push(row['inactiveusername']);
+					deferred.resolver.resolve({
+						'username':  row['inactiveusername'],
+						'password':  row['inactivepassword'],
+						'email':     row['inactiveemail'],
+						'link':      row['validationlink']
+					});
 				}
 			);
 			return deferred.promise;
@@ -209,6 +226,67 @@ buster.testCase('userMod', {
 				}
 			);
 			return deferred.promise;
+		},
+		'should reject a failed login': function () {
+			var users = this.users;
+			var getLoggedOutUser = this.getLoggedOutUser;
+			var deferred = when.defer();
+			var sessionID = '';
+			var userInfo = {};
+
+			when(this.getSession(),
+				function (sessID) {
+					sessionID = sessID;
+					return getLoggedOutUser();
+				}
+			).then(
+				function (user) {
+					userInfo = user;
+					return users.login(sessionID, userInfo.username,
+							'wrong');
+				}
+			).then(
+				function () {},
+				function (err) {
+					assert(true, 'It should reject the promise.');
+					deferred.resolver.resolve();
+				}
+			);
+			return deferred.promise;
+		},
+		'should reject user is inactive': function () {
+			var users = this.users;
+			var getInactiveUser = this.getInactiveUser;
+			var deferred = when.defer();
+			var sessionID = '';
+			var userInfo = {};
+
+			when(this.getSession(),
+				function (sessID) {
+					sessionID = sessID;
+					return getInactiveUser();
+				}
+			).then(
+				function (user) {
+					userInfo = user;
+					return users.login(sessionID, userInfo.username,
+							userInfo.password);
+				}
+			).then(
+				function () {},
+				function (err) {
+					assert(true, 'It should reject the promise.');
+					deferred.resolver.resolve();
+				}
+			);
+			return deferred.promise;
+		}
+	},
+	'logout': {
+		'should be a function': function () {
+			assert.typeOf(this.users.logout, 'function',
+			'There should be a logout function.');
 		}
 	}
 });
+*/

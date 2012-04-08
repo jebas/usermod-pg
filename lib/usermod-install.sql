@@ -1,3 +1,17 @@
+-- Database installation program for the user module.  
+
+create or replace function test_users_schema()
+returns setof text as $test$
+	begin
+		return next has_schema('users',
+			'There should be a special schema for users.');
+	end 
+$test$ language plpgsql;
+
+
+
+
+/*
 -- Database installation program for user module.
 create or replace function get_new_test_user(
 	out newusername		text,
@@ -1959,3 +1973,4 @@ returns setof text as $func$
 		return next 'Permissions set.';		
 	end;
 $func$ language plpgsql;
+*/
