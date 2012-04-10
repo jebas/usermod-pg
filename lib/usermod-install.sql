@@ -1,6 +1,36 @@
 -- Database installation program for the user module.  
 
-create or replace function test_users_schema()
+-- Functions for helping tests.  
+create or replace function get_unused_test_group_name()
+returns text as $$
+	declare
+		new_name	text;
+		holder_id	uuid;
+	begin
+		loop
+			select md5(random()::text) into new_name;
+			select into holder_id id from users.group
+				where name = lower(new_name);
+			exit when not found;
+		end loop;
+		return new_name;
+	end
+$$ language plpgsql;
+
+create or replace function get_test_group_name()
+returns text as $$
+	declare
+		new_name	text;
+	begin
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_group(new_name);
+		return new_name;
+	end
+$$ language plpgsql;
+
+-- Schema tests
+create or replace function test_users_schema_exists()
 returns setof text as $test$
 	begin
 		return next has_schema('users',
@@ -8,6 +38,220 @@ returns setof text as $test$
 	end 
 $test$ language plpgsql;
 
+-- Tests for support libraries
+create or replace function test_users_for_uuid_ossp_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^uuid_'),
+			'{}',
+			'uuid-ossp needs to be installed into public.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the group table
+create or replace function test_users_table_group_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'group', 'There should be a group table.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_col_id_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group', 'id', 
+			'Group id must exist.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_col_id_is_pk()
+returns setof text as $test$
+	begin
+		return next col_is_pk('users', 'group', 'id', 
+			'Group id needs to be the primary key.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_col_name_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group', 'name',
+			'Group name must exist.');
+	end
+$test$ language plpgsql;	
+
+create or replace function test_users_table_group_index_name_exists()
+returns setof text as $$
+	begin 
+		return next has_index('users', 'group', 'groupname', 
+			'lower(name)', 
+			'Users.group.name must be lowercase.');
+		return next index_is_unique('users', 'group', 'groupname',
+			'Users.group.name must be unique.');
+	end;
+$$ language plpgsql;
+
+-- Tests for the create group function
+create or replace function test_users_function_creategroup_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'create_group',
+			array['text'], 'uuid', 
+			'There needs to be a create group function.');
+		return next is_definer('users', 'create_group', 
+			array['text'], 
+			'Create group needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_creategroup_adds_data()
+returns setof text as $test$
+	declare
+		new_name	text;
+		holder_id	uuid;
+	begin
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into holder_id create_group 
+			from users.create_group(new_name);
+		return next results_eq(
+			$$select id, name from users.group
+				where name = '$$ || new_name || $$'$$,
+			$$values ('$$ || holder_id || $$'::uuid, 
+				'$$ || new_name || $$')$$,
+			'Create group should enter data into the table.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the delete group function
+create or replace function test_users_function_deletegroup_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'delete_group',
+			array['text'], 'void', 
+			'There needs to be a delete group function.');
+		return next is_definer('users', 'delete_group', 
+			array['text'], 
+			'Delete group needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_deletegroup_removes_data()
+returns setof text as $test$
+	declare
+		new_name	text;
+	begin
+		select into new_name get_test_group_name
+			from get_test_group_name();
+		perform users.delete_group(new_name);
+		return next is_empty(
+			$$select * from users.group
+				where name = '$$ || new_name || $$'$$,
+			'Delete group should remove data.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_deletegroup_not_case_sensitive()
+returns setof text as $test$
+	declare
+		new_name	text;
+	begin
+		select into new_name get_test_group_name
+			from get_test_group_name();
+		perform users.delete_group(upper(new_name));
+		return next is_empty(
+			$$select * from users.group
+				where name = '$$ || new_name || $$'$$,
+			'Delete group should remove data.');
+	end
+$test$ language plpgsql;
+
+-- Installation/Update function
+create or replace function correct_users()
+returns setof text as $func$
+	begin
+		-- Creating Schemas
+		if failed_test('test_users_schema_exists') then
+			create schema users;
+			return next 'Created users schema';
+		end if;
+		
+		-- Creating tables
+		if failed_test('test_users_table_group_exists') then
+			create table users.group();
+			return next 'Created the group table.';
+		end if;
+		if failed_test('test_users_table_group_col_id_exists') then
+			alter table users.group
+				add column id uuid;
+			return next 'Added the users.group.id column.';
+		end if;
+		if failed_test('test_users_table_group_col_id_is_pk') then
+			alter table users.group
+				add primary key (id);
+			return next 'Made users.group.id the primary key.';
+		end if;
+		if failed_test('test_users_table_group_col_name_exists') then
+			alter table users.group
+				add column name text;
+			return next 'Added the users.group.name column.';
+		end if;
+		
+		if failed_test('test_users_table_group_index_name_exists') then
+			drop index if exists users.groupname;
+			create unique index groupname 
+				on users.group (lower(name));
+			return next 'Created users.group.name index.';
+		end if;
+		
+		-- Create functions
+		create or replace function users.create_group(
+			group_name		text)
+		returns uuid as $$
+			declare
+				new_id		uuid;
+				holder_id	uuid;
+			begin
+				loop
+					select into new_id uuid_generate_v4
+						from public.uuid_generate_v4();
+					select into holder_id id from users.group
+						where id = new_id;
+					exit when not found;
+				end loop;
+				insert into users.group (id, name) values
+					(new_id, group_name);
+				return new_id;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.create_group.';
+		
+		create or replace function users.delete_group(
+			group_name		text)
+		returns void as $$
+			begin
+				delete from users.group
+					where name = lower(group_name);
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_group.';
+				
+		-- Set permissions
+		revoke all on function
+			users.create_group(
+				group_name		text),
+			users.delete_group(
+				group_name		text)
+		from public;
+		
+		grant usage on schema users to nodepg;
+		
+		return next 'Premissions set';
+	end
+$func$ language plpgsql;
 
 
 
