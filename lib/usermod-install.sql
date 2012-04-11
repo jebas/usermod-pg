@@ -49,6 +49,16 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_for_pgcrypto_installation()
+returns setof text as $test$
+	begin 
+		return next isnt(
+			findfuncs('public', '^crypt'),
+			'{}',
+			'pgcrypto needs to be installed into public.');
+	end;
+$test$ language plpgsql;
+
 -- Tests for the group table
 create or replace function test_users_table_group_exists()
 returns setof text as $test$
@@ -91,6 +101,39 @@ returns setof text as $$
 			'Users.group.name must be unique.');
 	end;
 $$ language plpgsql;
+
+-- Tests for the user table
+create or replace function test_users_table_user_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'user', 'There should be a user table.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_user_col_id_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'user', 'id', 
+			'User id must exist.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_user_col_id_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'user', 'id',
+			'users', 'group', 'id',
+			'User id is a foreign key to the group id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_user_col_password_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'user', 'password',
+			'User needs a password column.');
+	end
+$test$ language plpgsql;
 
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
@@ -167,6 +210,83 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for create user function
+create or replace function test_users_function_createuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'create_user',
+			array['text', 'text'], 'uuid', 
+			'There needs to be a create user function.');
+		return next is_definer('users', 'create_user', 
+			array['text', 'text'], 
+			'Create user needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_createuser_adds_data()
+returns setof text as $test$
+	declare
+		user_id		uuid;
+		user_name	text;
+	begin
+		select into user_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into user_id create_user
+			from users.create_user(user_name, 'password');
+		return next results_eq(
+			$$select id, name from users.group
+				where name = '$$ || user_name || $$'$$,
+			$$values ('$$ || user_id || $$'::uuid, 
+				'$$ || user_name || $$')$$,
+			'Create user should create the user''s group.');
+		return next results_eq(
+			$$select id from users.user
+				where id = '$$ || user_id || $$'$$,
+			$$values ('$$ || user_id || $$'::uuid)$$,
+			'The password information needs to be stored in the user table.');
+		return next results_ne(
+			$$select password from users.user
+				where id = '$$ || user_id || $$'$$,
+			$$values ('password')$$,
+			'User password should be encrypted.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the delete user function
+create or replace function test_users_function_deleteuser_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'delete_user',
+			array['text'], 'void', 
+			'There needs to be a delete user function.');
+		return next is_definer('users', 'delete_user', 
+			array['text'], 
+			'Delete user needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_deleteuser_removes_data()
+returns setof text as $test$
+	declare
+		user_id		uuid;
+		user_name	text;
+	begin
+		select into user_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into user_id create_user
+			from users.create_user(user_name, 'password');
+		perform users.delete_user(user_name);
+		return next is_empty(
+			$$select * from users.group
+				where id = '$$ || user_id || $$'$$,
+			'Delete user should remove the associated group.');
+		return next is_empty(
+			$$select * from users.user
+				where id = '$$ || user_id || $$'$$,
+			'Delete user should remove the user information.');
+	end
+$test$ language plpgsql;
+
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
@@ -205,6 +325,31 @@ returns setof text as $func$
 			return next 'Created users.group.name index.';
 		end if;
 		
+		if failed_test('test_users_table_user_exists') then
+			create table users.user();
+			return next 'Created the user table.';
+		end if;
+		if failed_test('test_users_table_user_col_id_exists') then
+			alter table users.user
+				add column id uuid;
+			return next 'Added the users.user.id column.';
+		end if;
+		if failed_test('test_users_table_user_col_id_is_fk') then
+			alter table users.user
+				drop constraint if exists group_user_id;
+			alter table users.user
+				add constraint group_user_id
+				foreign key (id)
+				references users.group (id)
+				on delete cascade;
+			return next 'Setup the user and group id foreign keys.';
+		end if;
+		if failed_test('test_users_table_user_col_password_exists') then
+			alter table users.user
+				add column password text;
+			return next 'Added the users.user.password column.';
+		end if;
+
 		-- Create functions
 		create or replace function users.create_group(
 			group_name		text)
@@ -238,13 +383,45 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.delete_group.';
+		
+		create or replace function users.create_user(
+			user_name		text,
+			password		text)
+		returns uuid as $$
+			declare
+				user_id		uuid;
+			begin
+				select into user_id create_group
+					from users.create_group(user_name);
+				insert into users.user (id, password) values
+					(user_id, public.crypt(password, public.gen_salt('bf')));
+				return user_id;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.create_user.';
+		
+		create or replace function users.delete_user(
+			user_name		text)
+		returns void as $$
+			begin
+				perform users.delete_group(user_name);
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.delete_user.';
 				
 		-- Set permissions
 		revoke all on function
 			users.create_group(
 				group_name		text),
 			users.delete_group(
-				group_name		text)
+				group_name		text),
+			users.create_user(
+				user_name		text,
+				password		text),
+			users.delete_user(
+				user_name		text)
 		from public;
 		
 		grant usage on schema users to nodepg;
