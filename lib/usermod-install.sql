@@ -135,6 +135,35 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for special users and groups
+create or replace function test_users_special_user_anonymous_exists()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select users.group.id, users.group.name, users.user.password
+				from users.group, users.user
+				where users.group.id = users.user.id
+					and users.group.name = 'anonymous'$$,
+			$$values (uuid_nil(), 'anonymous', '')$$,
+			'There should be an anonymous user.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_user_anonymous_cannot_delete()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$select users.delete_user('anonymous')$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous user cannot be deleted.');                                                                                                            
+		return next throws_ok(
+			$$delete from users.user 
+				where id = uuid_nil()$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The Anonymous password cannot be deleted.');
+	end
+$test$ language plpgsql;  
+
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
 returns setof text as $test$
@@ -207,6 +236,65 @@ returns setof text as $test$
 			$$select * from users.group
 				where name = '$$ || new_name || $$'$$,
 			'Delete group should remove data.');
+	end
+$test$ language plpgsql;
+
+-- Tests for changing the group name
+create or replace function test_users_function_changegroupname_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_group_name',
+			array['text', 'text'], 'void', 
+			'There needs to be a change group name function.');
+		return next is_definer('users', 'change_group_name', 
+			array['text', 'text'], 
+			'Change group name needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_changegroupname_updates()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		old_name		text;
+		new_name		text;
+	begin
+		select into old_name get_test_group_name
+			from get_test_group_name();
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into user_id id
+			from users.group
+			where name = lower(old_name);
+		perform users.change_group_name(old_name, new_name);
+		return next results_eq(
+			$$select name from users.group
+				where id = '$$ || user_id || $$'$$,
+			$$values ('$$ || new_name || $$')$$,
+			'Change name should change the group name.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_changegroupname_case_insensitive()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		old_name		text;
+		new_name		text;
+	begin
+		select into old_name get_test_group_name
+			from get_test_group_name();
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into user_id id
+			from users.group
+			where name = lower(old_name);
+		perform users.change_group_name(upper(old_name), new_name);
+		return next results_eq(
+			$$select name from users.group
+				where id = '$$ || user_id || $$'$$,
+			$$values ('$$ || new_name || $$')$$,
+			'Change name should change the group name.');
 	end
 $test$ language plpgsql;
 
@@ -349,6 +437,52 @@ returns setof text as $func$
 				add column password text;
 			return next 'Added the users.user.password column.';
 		end if;
+		
+		-- Create special users and groups
+		if failed_test('test_users_special_user_anonymous_exists') then
+			insert into users.group (id, name) values
+				(uuid_nil(), 'anonymous');
+			insert into users.user (id, password) values
+				(uuid_nil(), '');
+			return next 'Added the anonymous user.';
+		end if;
+		
+		-- Drop triggers so they can be updated
+		drop trigger if exists protect_anonymous_name on users.group;
+		drop trigger if exists protect_anonymous_password on users.user;
+
+		-- Create trigger functions
+		create or replace function users.protect_anonymous()
+		returns trigger as $$
+			begin
+				if OLD.id = public.uuid_nil() then 
+					raise 'Anonymous cannot be changed.';
+				end if;
+				/*
+				if TG_OP = 'UPDATE' then
+					return NEW;
+				end if;
+				*/
+				if TG_OP = 'DELETE' then
+					return OLD;
+				end if;
+			end;
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created trigger function users.protect_anonymous.';
+		
+		-- Create triggers
+		create trigger protect_anonymous_name
+			before delete
+			on users.group
+			for each row execute procedure users.protect_anonymous();
+		return next 'Created the protect anonymous name trigger.';
+
+		create trigger protect_anonymous_password
+			before delete
+			on users.user
+			for each row execute procedure users.protect_anonymous();
+		return next 'Created the protect anonymous password trigger.';
 
 		-- Create functions
 		create or replace function users.create_group(
@@ -410,9 +544,24 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.delete_user.';
+		
+		create or replace function users.change_group_name(
+			old_user_name	text,
+			new_user_name	text)
+		returns void as $$
+			begin
+				update users.group set name = new_user_name
+					where name = lower(old_user_name);
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_group_name.';
 				
 		-- Set permissions
 		revoke all on function
+			-- triggers
+			users.protect_anonymous(),
+			-- Admin functions
 			users.create_group(
 				group_name		text),
 			users.delete_group(
@@ -421,7 +570,10 @@ returns setof text as $func$
 				user_name		text,
 				password		text),
 			users.delete_user(
-				user_name		text)
+				user_name		text),
+			users.change_group_name(
+				old_user_name	text,
+				new_user_name	text)
 		from public;
 		
 		grant usage on schema users to nodepg;
