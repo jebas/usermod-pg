@@ -298,6 +298,24 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_function_changegroupname_gives_error()
+returns setof text as $test$
+	declare
+		old_name		text;
+		new_name		text;
+	begin
+		select into old_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next throws_ok(
+			$$select users.change_group_name('$$ || old_name || $$',
+				'$$ || new_name || $$')$$,
+				'P0001', 'User does not exist',
+				'Change group should throw error if user does not exist.');
+	end
+$test$ language plpgsql;
+
 -- Tests for create user function
 create or replace function test_users_function_createuser_exists()
 returns setof text as $test$
@@ -372,6 +390,42 @@ returns setof text as $test$
 			$$select * from users.user
 				where id = '$$ || user_id || $$'$$,
 			'Delete user should remove the user information.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the change user name function
+create or replace function test_users_function_changeusername_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_user_name',
+			array['text', 'text'], 'void', 
+			'There needs to be a change user name function.');
+		return next is_definer('users', 'change_user_name', 
+			array['text', 'text'], 
+			'Change user name needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_changeusername_updates()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		old_name		text;
+		new_name		text;
+	begin
+		select into old_name get_test_group_name
+			from get_test_group_name();
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into user_id id
+			from users.group
+			where name = lower(old_name);
+		perform users.change_user_name(old_name, new_name);
+		return next results_eq(
+			$$select name from users.group
+				where id = '$$ || user_id || $$'$$,
+			$$values ('$$ || new_name || $$')$$,
+			'Change name should change the user name.');
 	end
 $test$ language plpgsql;
 
@@ -552,10 +606,24 @@ returns setof text as $func$
 			begin
 				update users.group set name = new_user_name
 					where name = lower(old_user_name);
+				if not found then
+					raise 'User does not exist';
+				end if;
 			end
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_group_name.';
+		
+		create or replace function users.change_user_name(
+			old_user_name	text,
+			new_user_name	text)
+		returns void as $$
+			begin
+				perform users.change_group_name(old_user_name, new_user_name);
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_user_name.';
 				
 		-- Set permissions
 		revoke all on function
@@ -572,6 +640,9 @@ returns setof text as $func$
 			users.delete_user(
 				user_name		text),
 			users.change_group_name(
+				old_user_name	text,
+				new_user_name	text),
+			users.change_user_name(
 				old_user_name	text,
 				new_user_name	text)
 		from public;
