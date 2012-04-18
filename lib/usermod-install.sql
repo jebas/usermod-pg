@@ -135,6 +135,33 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for the web session table.  
+create or replace function test_web_table_session_col_userid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('web', 'session', 'user_id',
+			'The session table needs to be linked to the user.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_col_userid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('web', 'session', 'user_id',
+			'users', 'group', 'id',
+			'Web user id is a foreign key to the group id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_col_userid_default()
+returns setof text as $test$
+	begin
+		return next col_default_is(
+			'web', 'session', 'user_id', 'uuid_nil()',
+			'Sessions should default to the anonymous user.');
+	end
+$test$ language plpgsql;
+
 -- Tests for special users and groups
 create or replace function test_users_special_user_anonymous_exists()
 returns setof text as $test$
@@ -162,7 +189,22 @@ returns setof text as $test$
 			'P0001', 'Anonymous cannot be changed.',
 			'The Anonymous password cannot be deleted.');
 	end
-$test$ language plpgsql;  
+$test$ language plpgsql;
+
+create or replace function test_users_special_user_anonymous_cannot_change()
+returns setof text as $test$
+	declare 
+		new_name		text;
+	begin
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next throws_ok(
+			$$select users.change_user_name('anonymous', 
+				'$$ || new_name || $$')$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The anonymous user cannot change it''s name.');
+	end
+$test$ language plpgsql;
 
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
@@ -492,6 +534,26 @@ returns setof text as $func$
 			return next 'Added the users.user.password column.';
 		end if;
 		
+		if failed_test('test_web_table_session_col_userid_exists') then
+			alter table web.session
+				add column user_id uuid;
+			return next 'Added the web.session.user_id column.';
+		end if;
+		if failed_test('test_web_table_session_col_userid_is_fk') then
+			alter table web.session
+				drop constraint if exists session_user_id;
+			alter table web.session
+				add constraint session_user_id
+				foreign key (user_id)
+				references users.group (id);
+			return next 'Added the session user id foreign key.';
+		end if;
+		if failed_test('test_web_table_session_col_userid_default') then
+			alter table web.session 
+				alter column user_id set default uuid_nil();
+			return next 'Set sessions to start with the anonymous user.';
+		end if;
+		
 		-- Create special users and groups
 		if failed_test('test_users_special_user_anonymous_exists') then
 			insert into users.group (id, name) values
@@ -512,11 +574,9 @@ returns setof text as $func$
 				if OLD.id = public.uuid_nil() then 
 					raise 'Anonymous cannot be changed.';
 				end if;
-				/*
 				if TG_OP = 'UPDATE' then
 					return NEW;
 				end if;
-				*/
 				if TG_OP = 'DELETE' then
 					return OLD;
 				end if;
@@ -527,7 +587,7 @@ returns setof text as $func$
 		
 		-- Create triggers
 		create trigger protect_anonymous_name
-			before delete
+ 			before update or delete
 			on users.group
 			for each row execute procedure users.protect_anonymous();
 		return next 'Created the protect anonymous name trigger.';
