@@ -29,6 +29,35 @@ returns text as $$
 	end
 $$ language plpgsql;
 
+create or replace function get_test_user(
+	out		id			uuid,
+	out		name		text,
+	out		password	text)
+as $$
+	begin
+		select into name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select md5(random()::text) into password;
+		select into id create_user
+			from users.create_user(name, password);
+	end
+$$ language plpgsql;
+
+create or replace function get_logged_in_test_user(
+	out		sess_id			text,
+	out		sess_user_id	uuid,
+	out		sess_user_name	text,
+	out		sess_password	text)
+as $$
+	begin
+		select into sess_id create_test_session
+			from create_test_session();
+		select into sess_user_id, sess_user_name, sess_password
+			id, name, password from get_test_user();
+		perform users.login(sess_id, sess_user_name, sess_password);
+	end
+$$ language plpgsql;
+
 -- Schema tests
 create or replace function test_users_schema_exists()
 returns setof text as $test$
@@ -159,6 +188,22 @@ returns setof text as $test$
 		return next col_default_is(
 			'web', 'session', 'user_id', 'uuid_nil()',
 			'Sessions should default to the anonymous user.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_web_table_session_deletes_with_user()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		user_name		text;
+	begin
+		select into user_id, user_name sess_user_id, sess_user_name
+			from get_logged_in_test_user();
+		perform users.delete_user(user_name);
+		return next is_empty(
+			$$select * from web.session
+				where user_id = '$$ || user_id || $$'$$,
+			'The session should delete with the attached user.');
 	end
 $test$ language plpgsql;
 
@@ -471,6 +516,144 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for the login function
+create or replace function test_users_function_login_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'login',
+			array['text', 'text', 'text'], 'void', 
+			'There needs to be a login function.');
+		return next is_definer('users', 'login', 
+			array['text', 'text', 'text'], 
+			'Login needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_logs_in()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+		passwd			text;
+	begin
+		select into session_id create_test_session
+			from create_test_session();
+		select into user_name, passwd name, password
+			from get_test_user();
+		perform users.login(session_id, user_name, passwd);
+		return next results_eq(
+			$$select user_id from web.session
+				where sess_id = '$$ || session_id || $$'$$,
+			$$select id from users.group
+				where name = '$$ || user_name || $$'$$,
+			'Login should set the user for the session.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_not_case_sensitive()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+		passwd			text;
+	begin
+		select into session_id create_test_session
+			from create_test_session();
+		select into user_name, passwd name, password
+			from get_test_user();
+		perform users.login(session_id, upper(user_name), passwd);
+		return next results_eq(
+			$$select user_id from web.session
+				where sess_id = '$$ || session_id || $$'$$,
+			$$select id from users.group
+				where name = '$$ || user_name || $$'$$,
+			'Login should set the user for the session.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_errors_on_failure()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+		passwd			text:='wrong';
+	begin
+		select into session_id create_test_session
+			from create_test_session();
+		select into user_name name
+			from get_test_user();
+		return next throws_ok(
+			$$select users.login('$$ || session_id || $$', 
+				'$$ || user_name || $$', 
+				'$$ || passwd || $$')$$,
+			'P0001', 'Invalid user name or password',
+			'Login should error if user name or password is bad.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_login_errors_on_sessionid()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+		passwd			text;
+	begin
+		select into session_id new_session_id
+			from new_session_id();
+		select into user_name, passwd name, password
+			from get_test_user();
+		return next throws_ok(
+			$$select users.login('$$ || session_id || $$', 
+				'$$ || user_name || $$', 
+				'$$ || passwd || $$')$$,
+			'P0001', 'Invalid session id',
+			'Login should error if user name or password is bad.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the logout function
+create or replace function test_users_function_logout_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'logout',
+			array['text'], 'void', 
+			'There needs to be a logout function.');
+		return next is_definer('users', 'logout', 
+			array['text'], 
+			'Logout needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_logout_logs_out()
+returns setof text as $test$
+	declare
+		session_id		text;
+	begin
+		select into session_id sess_id
+			from get_logged_in_test_user();
+		perform users.logout(session_id);
+		return next results_eq(
+			$$select user_id from web.session
+				where sess_id = '$$ || session_id || $$'$$,
+			'values (uuid_nil())',
+			'Logout should reset the session user back to anonymous.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_logout_errors_on_bad_id()
+returns setof text as $test$
+	declare
+		session_id		text;
+	begin
+		select into session_id new_session_id
+			from new_session_id();
+		return next throws_ok(
+			$$select users.logout('$$ || session_id || $$')$$,
+			'P0001', 'Invalid session id',
+			'Logout should throw an error for an invalid session.');
+	end
+$test$ language plpgsql;
+
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
@@ -545,7 +728,8 @@ returns setof text as $func$
 			alter table web.session
 				add constraint session_user_id
 				foreign key (user_id)
-				references users.group (id);
+				references users.group (id)
+				on delete cascade;
 			return next 'Added the session user id foreign key.';
 		end if;
 		if failed_test('test_web_table_session_col_userid_default') then
@@ -684,6 +868,47 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_user_name.';
+		
+		create or replace function users.login(
+			session_id		text,
+			user_name		text,
+			user_password	text)
+		returns void as $$
+			declare
+				new_user_id		uuid;
+			begin
+				select into new_user_id users.group.id
+					from users.group, users.user
+					where users.group.id = users.user.id
+						and users.group.name = lower(user_name)
+						and users.user.password = 
+							public.crypt(user_password, users.user.password);
+				if not found then
+					raise 'Invalid user name or password';
+				end if;
+				update web.session set user_id = new_user_id
+					where sess_id = session_id;
+				if not found then
+					raise 'Invalid session id';
+				end if;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.login.';
+		
+		create or replace function users.logout(
+			session_id		text)
+		returns void as $$
+			begin
+				update web.session set user_id = public.uuid_nil()
+					where sess_id = session_id;
+				if not found then
+					raise 'Invalid session id';
+				end if;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.logout.';
 				
 		-- Set permissions
 		revoke all on function
@@ -704,9 +929,25 @@ returns setof text as $func$
 				new_user_name	text),
 			users.change_user_name(
 				old_user_name	text,
-				new_user_name	text)
+				new_user_name	text),
+			-- Node functions
+			users.login(
+				session_id		text,
+				user_name		text,
+				user_password	text),
+			users.logout(
+				session_id		text)
 		from public;
 		
+		grant execute on function 
+			users.login(
+				session_id		text,
+				user_name		text,
+				user_password	text),
+			users.logout(
+				session_id		text)
+		to nodepg;
+
 		grant usage on schema users to nodepg;
 		
 		return next 'Premissions set';
