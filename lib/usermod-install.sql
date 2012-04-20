@@ -251,6 +251,16 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_special_user_anonymous_has_empty_password()
+returns setof text as $test$
+	begin
+		return next throws_ok(
+			$$select users.change_password('anonymous', 'different')$$,
+			'P0001', 'Anonymous cannot be changed.',
+			'The anonymous user cannot change password.');
+	end
+$test$ language plpgsql;  
+
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
 returns setof text as $test$
@@ -654,6 +664,69 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for change password function.
+create or replace function test_users_function_changepasword_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'change_password',
+			array['text', 'text'], 'void', 
+			'There needs to be a change password function.');
+		return next is_definer('users', 'change_password', 
+			array['text', 'text'], 
+			'Change password needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_changes_password()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+	begin
+		select into session_id create_test_session
+			from create_test_session();
+		select into user_name name
+			from get_test_user();
+		perform users.change_password(user_name, 'different');
+		return next lives_ok(
+			$$select users.login('$$ || session_id || $$',
+				'$$ || user_name || $$', 'different')$$,
+			'Change password should change the password.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_case_independent()
+returns setof text as $test$
+	declare
+		session_id		text;
+		user_name		text;
+	begin
+		select into session_id create_test_session
+			from create_test_session();
+		select into user_name name
+			from get_test_user();
+		perform users.change_password(upper(user_name), 'different');
+		return next lives_ok(
+			$$select users.login('$$ || session_id || $$',
+				'$$ || user_name || $$', 'different')$$,
+			'Change password should be case independent user name.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_changepassword_throws_error()
+returns setof text as $test$
+	declare
+		user_name		text;
+	begin
+		select into user_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next throws_ok(
+			$$select users.change_password('$$ || user_name || $$', 'different')$$,
+			'P0001', 'Invalid user name',
+			'Should throw an error if the user name is invalid.');
+	end
+$test$ language plpgsql;
+
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
@@ -777,7 +850,7 @@ returns setof text as $func$
 		return next 'Created the protect anonymous name trigger.';
 
 		create trigger protect_anonymous_password
-			before delete
+			before update or delete
 			on users.user
 			for each row execute procedure users.protect_anonymous();
 		return next 'Created the protect anonymous password trigger.';
@@ -909,6 +982,25 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.logout.';
+		
+		create or replace function users.change_password(
+			user_name		text,
+			new_password	text)
+		returns void as $$
+			begin
+				update users.user 
+					set password = public.crypt(new_password, public.gen_salt('bf'))
+					where id =
+						(select id 
+							from users.group 
+							where name = lower(user_name));
+				if not found then
+					raise 'Invalid user name';
+				end if;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.change_password.';
 				
 		-- Set permissions
 		revoke all on function
@@ -930,6 +1022,9 @@ returns setof text as $func$
 			users.change_user_name(
 				old_user_name	text,
 				new_user_name	text),
+			users.change_password(
+				user_name		text,
+				new_password	text),
 			-- Node functions
 			users.login(
 				session_id		text,
