@@ -164,6 +164,49 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for the subgroup table
+create or replace function test_users_table_subgroup_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'subgroup', 
+			'There should be a subgroup table.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_subgroup_col_parentid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'subgroup', 'parent_id',
+			'Subgroup should have a parent id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_subgroup_col_parentid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'subgroup', 'parent_id',
+			'users', 'group', 'id',
+			'Subgroup parent id should be a foreign key to group id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_subgroup_col_childid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'subgroup', 'child_id',
+			'Subgroup should have a child id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_subgroup_col_childid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'subgroup', 'child_id',
+			'users', 'group', 'id',
+			'Subgroup child id should be a foreign key to group id.');
+	end
+$test$ language plpgsql;
+
 -- Tests for the web session table.  
 create or replace function test_web_table_session_col_userid_exists()
 returns setof text as $test$
@@ -763,6 +806,39 @@ returns setof text as $func$
 			create unique index groupname 
 				on users.group (lower(name));
 			return next 'Created users.group.name index.';
+		end if;
+		
+		if failed_test('test_users_table_subgroup_exists') then
+			create table users.subgroup();
+			return next 'Created the subgroup table.';
+		end if;
+		if failed_test('test_users_table_subgroup_col_parentid_exists') then
+			alter table users.subgroup
+				add column parent_id uuid;
+			return next 'Added the users.subgroup.parent_id column.';
+		end if;
+		if failed_test('test_users_table_subgroup_col_parentid_is_fk') then
+			alter table users.subgroup
+				drop constraint if exists subgroup_parentid;
+			alter table users.subgroup
+				add constraint subgroup_parentid
+				foreign key (parent_id)
+				references users.group (id);
+			return next 'Created the subgroup foreign key for parent id.';
+		end if;
+		if failed_test('test_users_table_subgroup_col_childid_exists') then
+			alter table users.subgroup
+				add column child_id uuid;
+			return next 'Added the users.subgroup.child_id column.';
+		end if;
+		if failed_test('test_users_table_subgroup_col_childid_is_fk') then
+			alter table users.subgroup
+				drop constraint if exists subgroup_childid;
+			alter table users.subgroup
+				add constraint subgroup_childid
+				foreign key (child_id)
+				references users.group (id);
+			return next 'Created the subgroup foreign key for child id.';
 		end if;
 		
 		if failed_test('test_users_table_user_exists') then
