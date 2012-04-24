@@ -770,6 +770,62 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for add group members
+create or replace function test_users_function_addgroupmember_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'add_group_member',
+			array['text', 'text'], 'void', 
+			'There needs to be a add group members function.');
+		return next is_definer('users', 'add_group_member', 
+			array['text', 'text'], 
+			'Add group members needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+-- Tests for view group members
+create or replace function test_users_function_groupmembers_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'group_members',
+			array['text'], 'setof record', 
+			'There needs to be a view group members function.');
+		return next is_definer('users', 'group_members', 
+			array['text'], 
+			'View group members needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_groupmembers_returns_group()
+returns setof text as $test$
+	declare
+		group_name		text;
+	begin
+		select into group_name get_test_group_name
+			from get_test_group_name();
+		return next results_eq(
+			$$select name, is_group 
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true)$$,
+			'An empty group should return itself and identify itself as a group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_groupmembers_returns_user()
+returns setof text as $test$
+	declare
+		user_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		return next results_eq(
+			$$select name, is_group 
+				from users.group_members('$$ || user_name || $$')$$,
+			$$values ('$$ || user_name || $$', false)$$,
+			'A user should return itself and identify itself as not a group.');
+	end
+$test$ language plpgsql;
+
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
@@ -1077,6 +1133,38 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.change_password.';
+		
+		create or replace function users.add_group_member(
+			group_name		text,
+			member_name		text)
+		returns void as $$
+			begin
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.add_group_member.';
+		
+		create or replace function users.group_members(
+			group_name		text)
+		returns table(
+			name text, 
+			is_group boolean)
+		as $$
+			begin
+				return query 
+					select users.group.name,
+						case
+							when users.user.id isnull then true
+							else false
+						end as is_group
+					from users.group
+					left outer join users.user 
+						on (users.group.id = users .user.id)
+					where users.group.name = group_name;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.group_members.';		
 				
 		-- Set permissions
 		revoke all on function
@@ -1101,6 +1189,11 @@ returns setof text as $func$
 			users.change_password(
 				user_name		text,
 				new_password	text),
+			users.add_group_member(
+				group_name		text,
+				member_name		text),
+			users.group_members(
+				group_name		text),
 			-- Node functions
 			users.login(
 				session_id		text,
