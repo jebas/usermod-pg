@@ -29,6 +29,18 @@ returns text as $$
 	end
 $$ language plpgsql;
 
+create or replace function get_test_group(
+	out		id			uuid,
+	out		name		text)
+as $$
+	begin
+		select into name get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into id create_group
+			from users.create_group(name);
+	end
+$$ language plpgsql;
+
 create or replace function get_test_user(
 	out		id			uuid,
 	out		name		text,
@@ -783,6 +795,33 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_function_addgroupmember_adds_member()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		user_name		text;
+		group_id		uuid;
+		group_name		text;
+	begin
+		select into user_id, user_name id, name
+			from get_test_user();
+		select into group_id, group_name id, name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		return next set_has(
+			$$select child_id from users.subgroup
+				where parent_id = '$$ || group_id || $$'$$,
+			$$values (cast('$$ || user_id || $$' as uuid))$$,
+			'Add member should add to the group listing.');
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true),
+				('$$ || user_name || $$', false)$$,
+			'This should report all of the group members.');
+	end
+$test$ language plpgsql;
+
 -- Tests for view group members
 create or replace function test_users_function_groupmembers_exists()
 returns setof text as $test$
@@ -1139,6 +1178,12 @@ returns setof text as $func$
 			member_name		text)
 		returns void as $$
 			begin
+				insert into users.subgroup (parent_id, child_id)
+					values (
+						(select id from users.group
+							where name = group_name), 
+						(select id from users.group
+							where name = member_name));
 			end
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
@@ -1147,8 +1192,8 @@ returns setof text as $func$
 		create or replace function users.group_members(
 			group_name		text)
 		returns table(
-			name text, 
-			is_group boolean)
+			name 			text, 
+			is_group 		boolean)
 		as $$
 			begin
 				return query 
