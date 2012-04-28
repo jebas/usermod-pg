@@ -808,17 +808,12 @@ returns setof text as $test$
 		select into group_id, group_name id, name
 			from get_test_group();
 		perform users.add_group_member(group_name, user_name);
-		return next set_has(
-			$$select child_id from users.subgroup
-				where parent_id = '$$ || group_id || $$'$$,
-			$$values (cast('$$ || user_id || $$' as uuid))$$,
-			'Add member should add to the group listing.');
 		return next set_eq(
 			$$select name, is_group
 				from users.group_members('$$ || group_name || $$')$$,
 			$$values ('$$ || group_name || $$', true),
 				('$$ || user_name || $$', false)$$,
-			'This should report all of the group members.');
+			'This should members to the group.');
 	end
 $test$ language plpgsql;
 
@@ -862,6 +857,62 @@ returns setof text as $test$
 				from users.group_members('$$ || user_name || $$')$$,
 			$$values ('$$ || user_name || $$', false)$$,
 			'A user should return itself and identify itself as not a group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_groupmembers_get_all_members()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		user_name		text;
+		group_id		uuid;
+		group_name		text;
+		parent_id		uuid;
+		parent_name		text;
+	begin
+		select into user_id, user_name id, name
+			from get_test_user();
+		select into group_id, group_name id, name
+			from get_test_group();
+		select into parent_id, parent_name id, name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.add_group_member(parent_name, group_name);
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || parent_name || $$')$$,
+			$$values ('$$ || group_name || $$', true),
+				('$$ || user_name || $$', false),
+				('$$ || parent_name || $$', true)$$,
+			'This should report all of the group members.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_groupmembers_case_insensitive()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		user_name		text;
+		group_id		uuid;
+		group_name		text;
+		parent_id		uuid;
+		parent_name		text;
+	begin
+		select into user_id, user_name id, name
+			from get_test_user();
+		select into group_id, group_name id, name
+			from get_test_group();
+		select into parent_id, parent_name id, name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.add_group_member(parent_name, group_name);
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || upper(parent_name) || $$')$$,
+			$$values ('$$ || group_name || $$', true),
+				('$$ || user_name || $$', false),
+				('$$ || parent_name || $$', true)$$,
+			'This should report all of the group members.');
 	end
 $test$ language plpgsql;
 
@@ -990,6 +1041,22 @@ returns setof text as $func$
 				(uuid_nil(), '');
 			return next 'Added the anonymous user.';
 		end if;
+		
+		-- Create database views
+		create or replace view users.grouplist as 
+			select users.group.id,
+				users.group.name,
+				users.subgroup.child_id,
+				case
+					when users.user.id is null then true
+					else false
+				end as is_group
+			from users.group
+			left outer join users.subgroup
+				on (users.group.id = users.subgroup.parent_id)
+			left outer join users.user
+				on (users.group.id = users.user.id);
+		return next 'Create the users.grouplist view';
 		
 		-- Drop triggers so they can be updated
 		drop trigger if exists protect_anonymous_name on users.group;
@@ -1197,15 +1264,26 @@ returns setof text as $func$
 		as $$
 			begin
 				return query 
-					select users.group.name,
-						case
-							when users.user.id isnull then true
-							else false
-						end as is_group
-					from users.group
-					left outer join users.user 
-						on (users.group.id = users .user.id)
-					where users.group.name = group_name;
+					with recursive grouping(id, name, child_id, is_group)
+					as (
+						select users.grouplist.id, 
+							users.grouplist.name, 
+							users.grouplist.child_id, 
+							users.grouplist.is_group
+						from users.grouplist
+						where users.grouplist.name = lower(group_name)
+						union
+						select users.grouplist.id,
+							users.grouplist.name,
+							users.grouplist.child_id,
+							users.grouplist.is_group
+						from 
+							users.grouplist,
+							grouping
+						where
+							grouping.child_id = users.grouplist.id
+						)
+					select grouping.name, grouping.is_group from grouping;
 			end
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
