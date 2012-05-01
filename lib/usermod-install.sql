@@ -17,18 +17,6 @@ returns text as $$
 	end
 $$ language plpgsql;
 
-create or replace function get_test_group_name()
-returns text as $$
-	declare
-		new_name	text;
-	begin
-		select into new_name get_unused_test_group_name
-			from get_unused_test_group_name();
-		perform users.create_group(new_name);
-		return new_name;
-	end
-$$ language plpgsql;
-
 create or replace function get_test_group(
 	out		id			uuid,
 	out		name		text)
@@ -202,6 +190,28 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_table_subgroup_col_parentid_deletes()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		return next lives_ok(
+			$$select users.delete_group('$$ || group_name || $$')$$,
+			'There should be no error when a group is deleted.'
+		);
+		return next is_empty(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			'This should members to the group.');
+	end
+$test$ language plpgsql;
+
 create or replace function test_users_table_subgroup_col_childid_exists()
 returns setof text as $test$
 	begin
@@ -216,6 +226,29 @@ returns setof text as $test$
 		return next fk_ok('users', 'subgroup', 'child_id',
 			'users', 'group', 'id',
 			'Subgroup child id should be a foreign key to group id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_subgroup_col_childid_deletes()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		return next lives_ok(
+			$$select users.delete_group('$$ || user_name || $$')$$,
+			'There should be no error when a group is deleted.'
+		);
+		return next results_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true)$$,
+			'The user should be removed.');
 	end
 $test$ language plpgsql;
 
@@ -366,8 +399,8 @@ returns setof text as $test$
 	declare
 		new_name	text;
 	begin
-		select into new_name get_test_group_name
-			from get_test_group_name();
+		select into new_name name
+			from get_test_group();
 		perform users.delete_group(new_name);
 		return next is_empty(
 			$$select * from users.group
@@ -381,8 +414,8 @@ returns setof text as $test$
 	declare
 		new_name	text;
 	begin
-		select into new_name get_test_group_name
-			from get_test_group_name();
+		select into new_name name
+			from get_test_group();
 		perform users.delete_group(upper(new_name));
 		return next is_empty(
 			$$select * from users.group
@@ -411,8 +444,8 @@ returns setof text as $test$
 		old_name		text;
 		new_name		text;
 	begin
-		select into old_name get_test_group_name
-			from get_test_group_name();
+		select into old_name name
+			from get_test_group();
 		select into new_name get_unused_test_group_name
 			from get_unused_test_group_name();
 		select into user_id id
@@ -434,8 +467,8 @@ returns setof text as $test$
 		old_name		text;
 		new_name		text;
 	begin
-		select into old_name get_test_group_name
-			from get_test_group_name();
+		select into old_name name
+			from get_test_group();
 		select into new_name get_unused_test_group_name
 			from get_unused_test_group_name();
 		select into user_id id
@@ -565,8 +598,8 @@ returns setof text as $test$
 		old_name		text;
 		new_name		text;
 	begin
-		select into old_name get_test_group_name
-			from get_test_group_name();
+		select into old_name name
+			from get_test_group();
 		select into new_name get_unused_test_group_name
 			from get_unused_test_group_name();
 		select into user_id id
@@ -798,14 +831,12 @@ $test$ language plpgsql;
 create or replace function test_users_function_addgroupmember_adds_member()
 returns setof text as $test$
 	declare
-		user_id			uuid;
 		user_name		text;
-		group_id		uuid;
 		group_name		text;
 	begin
-		select into user_id, user_name id, name
+		select into user_name name
 			from get_test_user();
-		select into group_id, group_name id, name
+		select into group_name name
 			from get_test_group();
 		perform users.add_group_member(group_name, user_name);
 		return next set_eq(
@@ -814,6 +845,118 @@ returns setof text as $test$
 			$$values ('$$ || group_name || $$', true),
 				('$$ || user_name || $$', false)$$,
 			'This should members to the group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupmember_no_duplicates()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		return next throws_ok(
+			$$select users.add_group_member('$$ || group_name || $$',
+				'$$ || user_name || $$')$$,
+			'23505', 'duplicate key value violates unique constraint "subgroup_pkey"',
+			'There should be no duplicates subgroups.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_addgroupmember_case_insensitive()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(upper(group_name), upper(user_name));
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true),
+				('$$ || user_name || $$', false)$$,
+			'This should members to the group.');
+	end
+$test$ language plpgsql;
+
+-- Test for removing a group member.
+create or replace function test_users_function_removegroupmember_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'remove_group_member',
+			array['text', 'text'], 'void', 
+			'There needs to be a remove group members function.');
+		return next is_definer('users', 'remove_group_member', 
+			array['text', 'text'], 
+			'Remove group members needs to security definer access.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_removegroupmember_removes_member()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.remove_group_member(group_name, user_name);
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true)$$,
+			'This should remove members to the group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_removegroupmember_group_case()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.remove_group_member(upper(group_name), user_name);
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true)$$,
+			'This should remove members to the group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_removegroupmember_member_case()
+returns setof text as $test$
+	declare
+		user_name		text;
+		group_name		text;
+	begin
+		select into user_name name
+			from get_test_user();
+		select into group_name name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.remove_group_member(group_name, upper(user_name));
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || group_name || $$')$$,
+			$$values ('$$ || group_name || $$', true)$$,
+			'This should remove members to the group.');
 	end
 $test$ language plpgsql;
 
@@ -835,8 +978,8 @@ returns setof text as $test$
 	declare
 		group_name		text;
 	begin
-		select into group_name get_test_group_name
-			from get_test_group_name();
+		select into group_name name
+			from get_test_group();
 		return next results_eq(
 			$$select name, is_group 
 				from users.group_members('$$ || group_name || $$')$$,
@@ -878,6 +1021,35 @@ returns setof text as $test$
 			from get_test_group();
 		perform users.add_group_member(group_name, user_name);
 		perform users.add_group_member(parent_name, group_name);
+		return next set_eq(
+			$$select name, is_group
+				from users.group_members('$$ || parent_name || $$')$$,
+			$$values ('$$ || group_name || $$', true),
+				('$$ || user_name || $$', false),
+				('$$ || parent_name || $$', true)$$,
+			'This should report all of the group members.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_groupmembers_get_no_infinite_loop()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		user_name		text;
+		group_id		uuid;
+		group_name		text;
+		parent_id		uuid;
+		parent_name		text;
+	begin
+		select into user_id, user_name id, name
+			from get_test_user();
+		select into group_id, group_name id, name
+			from get_test_group();
+		select into parent_id, parent_name id, name
+			from get_test_group();
+		perform users.add_group_member(group_name, user_name);
+		perform users.add_group_member(parent_name, group_name);
+		perform users.add_group_member(user_name, parent_name);
 		return next set_eq(
 			$$select name, is_group
 				from users.group_members('$$ || parent_name || $$')$$,
@@ -963,13 +1135,15 @@ returns setof text as $func$
 				add column parent_id uuid;
 			return next 'Added the users.subgroup.parent_id column.';
 		end if;
-		if failed_test('test_users_table_subgroup_col_parentid_is_fk') then
+		if failed_test('test_users_table_subgroup_col_parentid_is_fk') 
+			or failed_test('test_users_table_subgroup_col_parentid_deletes') then
 			alter table users.subgroup
 				drop constraint if exists subgroup_parentid;
 			alter table users.subgroup
 				add constraint subgroup_parentid
 				foreign key (parent_id)
-				references users.group (id);
+				references users.group (id)
+				on delete cascade;
 			return next 'Created the subgroup foreign key for parent id.';
 		end if;
 		if failed_test('test_users_table_subgroup_col_childid_exists') then
@@ -977,14 +1151,20 @@ returns setof text as $func$
 				add column child_id uuid;
 			return next 'Added the users.subgroup.child_id column.';
 		end if;
-		if failed_test('test_users_table_subgroup_col_childid_is_fk') then
+		if failed_test('test_users_table_subgroup_col_childid_is_fk')
+			or failed_test('test_users_table_subgroup_col_childid_deletes') then
 			alter table users.subgroup
 				drop constraint if exists subgroup_childid;
 			alter table users.subgroup
 				add constraint subgroup_childid
 				foreign key (child_id)
-				references users.group (id);
+				references users.group (id)
+				on delete cascade;
 			return next 'Created the subgroup foreign key for child id.';
+		end if;
+		if failed_test('test_users_function_addgroupmember_no_duplicates') then
+			alter table users.subgroup
+				add primary key (parent_id, child_id);
 		end if;
 		
 		if failed_test('test_users_table_user_exists') then
@@ -1248,13 +1428,28 @@ returns setof text as $func$
 				insert into users.subgroup (parent_id, child_id)
 					values (
 						(select id from users.group
-							where name = group_name), 
+							where name = lower(group_name)), 
 						(select id from users.group
-							where name = member_name));
+							where name = lower(member_name)));
 			end
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.add_group_member.';
+		
+		create or replace function users.remove_group_member(
+			group_name		text,
+			member_name		text)
+		returns void as $$
+			begin
+				delete from users.subgroup 
+					where parent_id = (select id from users.group
+						where name = lower(group_name))
+					and child_id = (select id from users.group
+						where name = lower(member_name));
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.remove_group_member.';
 		
 		create or replace function users.group_members(
 			group_name		text)
@@ -1313,6 +1508,9 @@ returns setof text as $func$
 				user_name		text,
 				new_password	text),
 			users.add_group_member(
+				group_name		text,
+				member_name		text),
+			users.remove_group_member(
 				group_name		text,
 				member_name		text),
 			users.group_members(
