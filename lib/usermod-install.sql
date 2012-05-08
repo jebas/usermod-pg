@@ -120,6 +120,22 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;	
 
+create or replace function test_users_table_group_col_special_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'group', 'special',
+			'Group table special column must exist.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_col_special_has_default()
+returns setof text as $test$
+	begin
+		return next col_default_is('users', 'group', 'special', 'false',
+			'Users.group.special must default to false.');
+	end
+$test$ language plpgsql;
+
 create or replace function test_users_table_group_index_name_exists()
 returns setof text as $$
 	begin 
@@ -314,12 +330,12 @@ returns setof text as $test$
 	begin
 		return next throws_ok(
 			$$select users.delete_user('anonymous')$$,
-			'P0001', 'Anonymous cannot be changed.',
+			'P0001', 'Anonymous and admin cannot be changed.',
 			'The Anonymous user cannot be deleted.');                                                                                                            
 		return next throws_ok(
 			$$delete from users.user 
 				where id = uuid_nil()$$,
-			'P0001', 'Anonymous cannot be changed.',
+			'P0001', 'Anonymous and admin cannot be changed.',
 			'The Anonymous password cannot be deleted.');
 	end
 $test$ language plpgsql;
@@ -334,7 +350,7 @@ returns setof text as $test$
 		return next throws_ok(
 			$$select users.change_user_name('anonymous', 
 				'$$ || new_name || $$')$$,
-			'P0001', 'Anonymous cannot be changed.',
+			'P0001', 'Anonymous and admin cannot be changed.',
 			'The anonymous user cannot change it''s name.');
 	end
 $test$ language plpgsql;
@@ -344,10 +360,69 @@ returns setof text as $test$
 	begin
 		return next throws_ok(
 			$$select users.change_password('anonymous', 'different')$$,
-			'P0001', 'Anonymous cannot be changed.',
+			'P0001', 'Anonymous and admin cannot be changed.',
 			'The anonymous user cannot change password.');
 	end
-$test$ language plpgsql;  
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_admin_exists()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select id from users.group
+				where id = uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
+			$$select * from uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
+			'The admin group should exist.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_admin_cannot_change()
+returns setof text as $test$
+	declare 
+		new_name		text;
+	begin
+		select into new_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next throws_ok(
+			$$select users.change_user_name('admin', 
+				'$$ || new_name || $$')$$,
+			'P0001', 'Anonymous and admin cannot be changed.',
+			'The admin group cannot change it''s name.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_admin_cannot_be_user()
+returns setof text as $test$
+	begin
+		perform todo('In the process of marking special groups.');
+		return next throws_OK(
+			$$insert into users.user (id, password) values
+				(users.get_admin_id(), '')$$, 
+			'P0001', 'Special groups cannot be users.',
+			'Admin cannot be made into a user.');
+	end
+$test$ language plpgsql;
+
+-- Tests for the admin user function
+create or replace function test_users_function_getadminid_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'get_admin_id', 'uuid', 
+			'There needs to be a get admin id function.');
+		return next is_definer('users', 'get_admin_id', 
+			'Get admin id needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_getadminid_returns_id()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select * from users.get_admin_id()$$,
+			$$select * from uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
+			'Get admin id should return the admin id.');
+	end
+$test$ language plpgsql;
 
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
@@ -1118,6 +1193,16 @@ returns setof text as $func$
 				add column name text;
 			return next 'Added the users.group.name column.';
 		end if;
+		if failed_test('test_users_table_group_col_special_exists') then
+			alter table users.group
+				add column special boolean;
+			return next 'Added the users.group.special column.';
+		end if;
+		if failed_test('test_users_table_group_col_special_has_default') then
+			alter table users.group
+				alter column special set default false;
+			return next 'Set users.group.special default to false.';
+		end if;
 		
 		if failed_test('test_users_table_group_index_name_exists') then
 			drop index if exists users.groupname;
@@ -1222,6 +1307,12 @@ returns setof text as $func$
 			return next 'Added the anonymous user.';
 		end if;
 		
+		if failed_test('test_users_special_group_admin_exists') then
+			insert into users.group (id, name) values
+				(uuid_generate_v5(uuid_ns_x500(), 'admin'), 'admin');
+			return next 'Added the admin group.';
+		end if;
+		
 		-- Create database views
 		create or replace view users.grouplist as 
 			select users.group.id,
@@ -1246,8 +1337,9 @@ returns setof text as $func$
 		create or replace function users.protect_anonymous()
 		returns trigger as $$
 			begin
-				if OLD.id = public.uuid_nil() then 
-					raise 'Anonymous cannot be changed.';
+				if OLD.id = public.uuid_nil()  
+				or OLD.id = users.get_admin_id() then 
+					raise 'Anonymous and admin cannot be changed.';
 				end if;
 				if TG_OP = 'UPDATE' then
 					return NEW;
@@ -1274,6 +1366,15 @@ returns setof text as $func$
 		return next 'Created the protect anonymous password trigger.';
 
 		-- Create functions
+		create or replace function users.get_admin_id()
+		returns uuid as $$
+			begin
+				return public.uuid_generate_v5(public.uuid_ns_x500(), 'admin');
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.get_admin_id.';
+		
 		create or replace function users.create_group(
 			group_name		text)
 		returns uuid as $$
@@ -1489,6 +1590,7 @@ returns setof text as $func$
 			-- triggers
 			users.protect_anonymous(),
 			-- Admin functions
+			users.get_admin_id(),
 			users.create_group(
 				group_name		text),
 			users.delete_group(
