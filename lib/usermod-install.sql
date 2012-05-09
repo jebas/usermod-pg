@@ -424,6 +424,135 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for get special group ids
+create or replace function test_users_function_getspecialgroupid_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'get_special_group_id', 
+			array['text'], 'uuid', 
+			'There needs to be a get special group id function.');
+		return next is_definer('users', 'get_special_group_id',
+			array['text'], 
+			'Get special group id needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_getspecialgroupid_adds_data()
+returns setof text as $test$
+	declare
+		special_name		text;
+	begin
+		select into special_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next results_eq(
+			$$select * from users.get_special_group_id(
+				'$$ || special_name || $$')$$,
+			$$select * from uuid_generate_v5(public.uuid_ns_x500(), 
+				'$$ || special_name || $$')$$,
+			'This should return the id of the special group.');
+	end
+$test$ language plpgsql;
+
+-- Test for creating special groups.
+create or replace function test_users_function_createspecialgroup_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'create_special_group', 
+			array['text'], 'void', 
+			'There needs to be a create special group function.');
+		return next is_definer('users', 'create_special_group', 
+			array['text'], 
+			'Create special group needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_createspecialgroup_adds_data()
+returns setof text as $test$
+	declare
+		group_name		text;
+	begin
+		select into group_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_special_group(group_name);
+		return next results_eq(
+			$$select id, name, special
+				from users.group
+				where name = '$$ || group_name || $$'$$,
+			$$values (uuid_generate_v5(public.uuid_ns_x500(),
+				'$$ || group_name || $$'), '$$ || group_name || $$',
+				true)$$,
+			'Create special group should create the entry.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_special_groups_cannot_delete()
+returns setof text as $test$
+	declare
+		group_name		text;
+	begin
+		select into group_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_special_group(group_name);
+		return next throws_ok(
+			$$select users.delete_group('$$ || group_name || $$')$$,
+			'P0001', 'Cannot change special groups.',
+			'Special groups cannot be deleted.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_special_groups_cannot_modify()
+returns setof text as $test$
+	declare
+		group_name		text;
+	begin
+		select into group_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_special_group(group_name);
+		return next throws_ok(
+			$$update users.group set special = false 
+				where name = '$$ || group_name || $$'$$,
+			'P0001', 'Cannot change special groups.',
+			'Special groups cannot be changed.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_special_groups_cannot_be_user()
+returns setof text as $test$
+	declare
+		group_name		text;
+	begin
+		select into group_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_special_group(group_name);
+		return next throws_ok(
+			$$insert into users.user (id, password) values
+				(users.get_special_group_id('$$ || group_name || $$'),
+				'password')$$,
+			'P0001', 'Special groups cannot be users.',
+			'Special groups cannot be made into users.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_group_special_groups_cannot_have_password()
+returns setof text as $test$
+	declare
+		user_id			uuid;
+		group_name		text;
+	begin
+		select into user_id id
+			from get_test_user();
+		select into group_name get_unused_test_group_name
+			from get_unused_test_group_name();
+		perform users.create_special_group(group_name);
+		return next throws_ok(
+			$$update users.user 
+				set id = users.get_special_group_id('$$ || group_name || $$')
+				where id = '$$ || user_id || $$'$$,
+			'P0001', 'Special groups cannot be users.',
+			'Existing user passwords cannot be assigned to special groups.');
+	end 
+$test$ language plpgsql;
+
 -- Tests for the create group function
 create or replace function test_users_function_creategroup_exists()
 returns setof text as $test$
@@ -1332,6 +1461,8 @@ returns setof text as $func$
 		-- Drop triggers so they can be updated
 		drop trigger if exists protect_anonymous_name on users.group;
 		drop trigger if exists protect_anonymous_password on users.user;
+		drop trigger if exists protect_special_groups on users.group;
+		drop trigger if exists prevent_special_users on users.user;
 
 		-- Create trigger functions
 		create or replace function users.protect_anonymous()
@@ -1352,6 +1483,41 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created trigger function users.protect_anonymous.';
 		
+		create or replace function users.protect_special_groups()
+		returns trigger as $$
+			begin
+				if OLD.special then
+					raise 'Cannot change special groups.';
+				end if;
+				if TG_OP = 'UPDATE' then
+					return NEW;
+				end if;
+				if TG_OP = 'DELETE' then
+					return OLD;
+				end if;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created trigger function users.protect_special_groups.';
+		
+		create or replace function users.prevent_special_users()
+		returns trigger as $$
+			declare
+				user_name		text;
+			begin
+				select into user_name name
+					from users.group
+					where users.group.id = NEW.id
+						and users.group.special = true;
+				if found then
+					raise 'Special groups cannot be users.';
+				end if;
+				return NEW;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created trigger function users.prevent_special_users.';
+		
 		-- Create triggers
 		create trigger protect_anonymous_name
  			before update or delete
@@ -1364,8 +1530,42 @@ returns setof text as $func$
 			on users.user
 			for each row execute procedure users.protect_anonymous();
 		return next 'Created the protect anonymous password trigger.';
+		
+		create trigger protect_special_groups
+			before update or delete
+			on users.group
+			for each row execute procedure users.protect_special_groups();
+		return next 'Created the protect special groups trigger.';
+		
+		create trigger prevent_special_users
+			before insert or update
+			on users.user
+			for each row execute procedure users.prevent_special_users();
+		return next 'Created the prevent special users trigger.';
 
 		-- Create functions
+		create or replace function users.get_special_group_id(
+			group_name		text)
+		returns uuid as $$
+			begin
+				return public.uuid_generate_v5(public.uuid_ns_x500(), group_name);
+			end 
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.get_special_group_id.';
+		
+		create or replace function users.create_special_group(
+			group_name		text)
+		returns void as $$
+			begin
+				insert into users.group (id, name, special) values
+					(users.get_special_group_id(group_name), 
+						group_name, true);
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.create_special_group.';
+		
 		create or replace function users.get_admin_id()
 		returns uuid as $$
 			begin
@@ -1589,7 +1789,11 @@ returns setof text as $func$
 		revoke all on function
 			-- triggers
 			users.protect_anonymous(),
+			users.protect_special_groups(),
+			users.prevent_special_users(),
 			-- Admin functions
+			users.get_special_group_id(
+				group_name		text),
 			users.get_admin_id(),
 			users.create_group(
 				group_name		text),
