@@ -330,12 +330,12 @@ returns setof text as $test$
 	begin
 		return next throws_ok(
 			$$select users.delete_user('anonymous')$$,
-			'P0001', 'Anonymous and admin cannot be changed.',
+			'P0001', 'Cannot change special groups.',
 			'The Anonymous user cannot be deleted.');                                                                                                            
 		return next throws_ok(
 			$$delete from users.user 
 				where id = uuid_nil()$$,
-			'P0001', 'Anonymous and admin cannot be changed.',
+			'P0001', 'Anonymous cannot be changed.',
 			'The Anonymous password cannot be deleted.');
 	end
 $test$ language plpgsql;
@@ -350,7 +350,7 @@ returns setof text as $test$
 		return next throws_ok(
 			$$select users.change_user_name('anonymous', 
 				'$$ || new_name || $$')$$,
-			'P0001', 'Anonymous and admin cannot be changed.',
+			'P0001', 'Cannot change special groups.',
 			'The anonymous user cannot change it''s name.');
 	end
 $test$ language plpgsql;
@@ -360,7 +360,7 @@ returns setof text as $test$
 	begin
 		return next throws_ok(
 			$$select users.change_password('anonymous', 'different')$$,
-			'P0001', 'Anonymous and admin cannot be changed.',
+			'P0001', 'Anonymous cannot be changed.',
 			'The anonymous user cannot change password.');
 	end
 $test$ language plpgsql;
@@ -369,58 +369,32 @@ create or replace function test_users_special_group_admin_exists()
 returns setof text as $test$
 	begin
 		return next results_eq(
-			$$select id from users.group
-				where id = uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
-			$$select * from uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
-			'The admin group should exist.');
+			$$select name, special from users.group
+				where id = users.get_special_group_id('admin')$$,
+			$$values ('admin', true)$$,
+			'Admin should exist as a special group.');
 	end
 $test$ language plpgsql;
 
-create or replace function test_users_special_group_admin_cannot_change()
-returns setof text as $test$
-	declare 
-		new_name		text;
-	begin
-		select into new_name get_unused_test_group_name
-			from get_unused_test_group_name();
-		return next throws_ok(
-			$$select users.change_user_name('admin', 
-				'$$ || new_name || $$')$$,
-			'P0001', 'Anonymous and admin cannot be changed.',
-			'The admin group cannot change it''s name.');
-	end
-$test$ language plpgsql;
-
-create or replace function test_users_special_group_admin_cannot_be_user()
-returns setof text as $test$
-	begin
-		perform todo('In the process of marking special groups.');
-		return next throws_OK(
-			$$insert into users.user (id, password) values
-				(users.get_admin_id(), '')$$, 
-			'P0001', 'Special groups cannot be users.',
-			'Admin cannot be made into a user.');
-	end
-$test$ language plpgsql;
-
--- Tests for the admin user function
-create or replace function test_users_function_getadminid_exists()
-returns setof text as $test$
-	begin 
-		return next function_returns('users', 'get_admin_id', 'uuid', 
-			'There needs to be a get admin id function.');
-		return next is_definer('users', 'get_admin_id', 
-			'Get admin id needs to security definer access.');
-	end;
-$test$ language plpgsql;
-
-create or replace function test_users_function_getadminid_returns_id()
+create or replace function test_users_special_group_authenticated_exists()
 returns setof text as $test$
 	begin
 		return next results_eq(
-			$$select * from users.get_admin_id()$$,
-			$$select * from uuid_generate_v5(uuid_ns_x500(), 'admin')$$,
-			'Get admin id should return the admin id.');
+			$$select name, special from users.group
+				where id = users.get_special_group_id('authenticated')$$,
+			$$values ('authenticated', true)$$,
+			'Authenticated should exist as a special group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_allusers_exists()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select name, special from users.group
+				where id = users.get_special_group_id('all users')$$,
+			$$values ('all users', true)$$,
+			'All users should exist as a special group.');
 	end
 $test$ language plpgsql;
 
@@ -1427,21 +1401,6 @@ returns setof text as $func$
 			return next 'Set sessions to start with the anonymous user.';
 		end if;
 		
-		-- Create special users and groups
-		if failed_test('test_users_special_user_anonymous_exists') then
-			insert into users.group (id, name) values
-				(uuid_nil(), 'anonymous');
-			insert into users.user (id, password) values
-				(uuid_nil(), '');
-			return next 'Added the anonymous user.';
-		end if;
-		
-		if failed_test('test_users_special_group_admin_exists') then
-			insert into users.group (id, name) values
-				(uuid_generate_v5(uuid_ns_x500(), 'admin'), 'admin');
-			return next 'Added the admin group.';
-		end if;
-		
 		-- Create database views
 		create or replace view users.grouplist as 
 			select users.group.id,
@@ -1459,7 +1418,6 @@ returns setof text as $func$
 		return next 'Create the users.grouplist view';
 		
 		-- Drop triggers so they can be updated
-		drop trigger if exists protect_anonymous_name on users.group;
 		drop trigger if exists protect_anonymous_password on users.user;
 		drop trigger if exists protect_special_groups on users.group;
 		drop trigger if exists prevent_special_users on users.user;
@@ -1468,9 +1426,8 @@ returns setof text as $func$
 		create or replace function users.protect_anonymous()
 		returns trigger as $$
 			begin
-				if OLD.id = public.uuid_nil()  
-				or OLD.id = users.get_admin_id() then 
-					raise 'Anonymous and admin cannot be changed.';
+				if OLD.id = public.uuid_nil() then 
+					raise 'Anonymous cannot be changed.';
 				end if;
 				if TG_OP = 'UPDATE' then
 					return NEW;
@@ -1486,7 +1443,8 @@ returns setof text as $func$
 		create or replace function users.protect_special_groups()
 		returns trigger as $$
 			begin
-				if OLD.special then
+				if OLD.special 
+				or OLD.id = public.uuid_nil() then
 					raise 'Cannot change special groups.';
 				end if;
 				if TG_OP = 'UPDATE' then
@@ -1519,12 +1477,6 @@ returns setof text as $func$
 		return next 'Created trigger function users.prevent_special_users.';
 		
 		-- Create triggers
-		create trigger protect_anonymous_name
- 			before update or delete
-			on users.group
-			for each row execute procedure users.protect_anonymous();
-		return next 'Created the protect anonymous name trigger.';
-
 		create trigger protect_anonymous_password
 			before update or delete
 			on users.user
@@ -1565,15 +1517,6 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.create_special_group.';
-		
-		create or replace function users.get_admin_id()
-		returns uuid as $$
-			begin
-				return public.uuid_generate_v5(public.uuid_ns_x500(), 'admin');
-			end
-		$$ language plpgsql security definer
-		set search_path = users, pg_temp;
-		return next 'Created function users.get_admin_id.';
 		
 		create or replace function users.create_group(
 			group_name		text)
@@ -1794,7 +1737,6 @@ returns setof text as $func$
 			-- Admin functions
 			users.get_special_group_id(
 				group_name		text),
-			users.get_admin_id(),
 			users.create_group(
 				group_name		text),
 			users.delete_group(
@@ -1842,6 +1784,31 @@ returns setof text as $func$
 		grant usage on schema users to nodepg;
 		
 		return next 'Premissions set';
+
+		-- Create special users and groups
+		if failed_test('test_users_special_user_anonymous_exists') then
+			insert into users.group (id, name) values
+				(uuid_nil(), 'anonymous');
+			insert into users.user (id, password) values
+				(uuid_nil(), '');
+			return next 'Added the anonymous user.';
+		end if;
+		
+		if failed_test('test_users_special_group_admin_exists') then
+			perform users.create_special_group('admin');
+			return next 'Created the admin group.';
+		end if;
+		
+		if failed_test('test_users_special_group_authenticated_exists') then
+			perform users.create_special_group('authenticated');
+			return next 'Created the authenticated group.';
+		end if;
+
+		if failed_test('test_users_special_group_allusers_exists') then
+			perform users.create_special_group('all users');
+			return next 'Created the all users group.';
+		end if;		
+				
 	end
 $func$ language plpgsql;
 
