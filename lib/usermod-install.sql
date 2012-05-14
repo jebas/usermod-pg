@@ -376,6 +376,20 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_special_group_admin_has_user()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select count(*) > 0
+				from users.subgroup, users.user
+				where users.subgroup.child_id = users.user.id
+					and users.subgroup.parent_id = 
+						users.get_special_group_id('admin')$$,
+			$$values (true)$$,
+			'There should be at least one user in the admin group.');
+	end
+$test$ language plpgsql;
+
 create or replace function test_users_special_group_authenticated_exists()
 returns setof text as $test$
 	begin
@@ -387,6 +401,19 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+create or replace function test_users_special_group_athenticated_has_users()
+returns setof text as $test$
+	begin
+		-- this test requires external data.
+		return next set_eq(
+			$$select child_id from users.subgroup
+				where parent_id = users.get_special_group_id('authenticated')$$, 
+			$$select id from users.user
+				where id != uuid_nil()$$, 
+			'Authenticated should list all users but anonymous.');
+	end
+$test$ language plpgsql;
+
 create or replace function test_users_special_group_allusers_exists()
 returns setof text as $test$
 	begin
@@ -395,6 +422,29 @@ returns setof text as $test$
 				where id = users.get_special_group_id('all users')$$,
 			$$values ('all users', true)$$,
 			'All users should exist as a special group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_allusers_has_anonymous()
+returns setof text as $test$
+	begin
+		return next set_has(
+			$$select child_id from users.subgroup
+				where parent_id = users.get_special_group_id('all users')$$,
+			$$values (uuid_nil())$$,
+			'All users needs anonymous.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_special_group_allusers_has_authenticated()
+returns setof text as $test$
+	begin
+		return next set_has(
+			$$select child_id from users.subgroup
+				where parent_id = users.get_special_group_id('all users')$$,
+			$$values (users.get_special_group_id('authenticated'))$$,
+			'All users needs to have the authenticated group.'
+		);
 	end
 $test$ language plpgsql;
 
@@ -1269,6 +1319,11 @@ $test$ language plpgsql;
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
+	declare
+		admin_counter		int:=0;
+		admin_password		text:=md5(random()::text);
+		id_holder			uuid;
+		name_holder			text;
 	begin
 		-- Creating Schemas
 		if failed_test('test_users_schema_exists') then
@@ -1421,6 +1476,7 @@ returns setof text as $func$
 		drop trigger if exists protect_anonymous_password on users.user;
 		drop trigger if exists protect_special_groups on users.group;
 		drop trigger if exists prevent_special_users on users.user;
+		drop trigger if exists update_authenticated on users.user;
 
 		-- Create trigger functions
 		create or replace function users.protect_anonymous()
@@ -1476,6 +1532,26 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created trigger function users.prevent_special_users.';
 		
+		create or replace function users.update_authenticated()
+		returns trigger as $$
+			begin
+				insert into users.subgroup
+					select users.get_special_group_id('authenticated') as parent_id,
+						users.user.id as child_id
+					from users.user
+					left outer join 
+						(select * from users.subgroup
+							where parent_id = 
+								users.get_special_group_id('authenticated')) as authen
+						on (users.user.id = authen.child_id)
+					where authen.parent_id isnull
+						and users.user.id != public.uuid_nil();
+				return NEW;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created trigger function users.update_authenticated.';
+		
 		-- Create triggers
 		create trigger protect_anonymous_password
 			before update or delete
@@ -1494,6 +1570,12 @@ returns setof text as $func$
 			on users.user
 			for each row execute procedure users.prevent_special_users();
 		return next 'Created the prevent special users trigger.';
+		
+		create trigger update_authenticated
+			after insert or update
+			on users.user
+			execute procedure users.update_authenticated();
+		return next 'Created the update authenticated trigger.';
 
 		-- Create functions
 		create or replace function users.get_special_group_id(
@@ -1734,6 +1816,7 @@ returns setof text as $func$
 			users.protect_anonymous(),
 			users.protect_special_groups(),
 			users.prevent_special_users(),
+			users.update_authenticated(),
 			-- Admin functions
 			users.get_special_group_id(
 				group_name		text),
@@ -1807,8 +1890,39 @@ returns setof text as $func$
 		if failed_test('test_users_special_group_allusers_exists') then
 			perform users.create_special_group('all users');
 			return next 'Created the all users group.';
-		end if;		
+		end if;	
+		if failed_test('test_users_special_group_allusers_has_anonymous') then
+			perform users.add_group_member('all users', 'anonymous');
+			return next 'Added anonymous to all users.';
+		end if;
+		if failed_test('test_users_special_group_allusers_has_authenticated') then
+			perform users.add_group_member('all users', 'authenticated');
+			return next 'Added authenticated to all users.';
+		end if;
 				
+		if failed_test('test_users_special_group_admin_has_user') then
+			loop
+				name_holder := 'admin' || admin_counter;
+				select into id_holder users.user.id
+					from users.user, users.group
+					where users.user.id = users.group.id
+						and users.group.name = name_holder;
+				admin_counter := admin_counter + 1;
+				exit when not found;
+			end loop;
+			perform users.create_user(name_holder, admin_password);
+			perform users.add_group_member('admin', name_holder);
+			return next '---';
+			return next '---';
+			return next '---';
+			return next 'Created admin user: ' || name_holder;
+			return next 'Password for ' || name_holder || ' is "' || 
+				admin_password ||'"';
+			return next 'Changing user name and password is recommended.';
+			return next '---';
+			return next '---';
+			return next '---';
+		end if;
 	end
 $func$ language plpgsql;
 
