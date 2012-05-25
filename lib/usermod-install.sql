@@ -268,6 +268,110 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Test for the user function table.
+create or replace function test_users_table_function_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'function', 'There should be a function table.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_function_col_name_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'function', 'name',
+			'The function table needs a name column.');
+	end 
+$test$ language plpgsql;
+
+create or replace function test_users_table_function_col_name_is_pk()
+returns setof text as $test$
+	begin
+		return next col_is_pk('users', 'function', 'name',
+			'Name column should be the primary key on users.function.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_function_col_id_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'function', 'id',
+			'The function table needs an id column.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_function_index_id_exists()
+returns setof text as $test$
+	begin
+		return next has_index('users', 'function', 'function_id', 'id',
+			'There needs to be an index on the function id.');
+		return next index_is_unique('users', 'function', 'function_id',
+			'Function id index needs to be unique.');
+	end 
+$test$ language plpgsql;
+
+-- Test for the permissions table.
+create or replace function test_users_table_permission_exists()
+returns setof text as $test$
+	begin
+		return next has_table('users', 'permission', 'There should be a permission table.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_permission_col_functionid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'permission', 'func_id',
+			'The permission table needs to contain function ids.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_premission_col_functionid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'permission', 'func_id',
+			'users', 'function', 'id',
+			'Set func_id as a foreign key to users.function.id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_permission_col_functionid_deletes()
+returns setof text as $test$
+	declare
+		thefunction		text:='users.test';
+		functionid		uuid;
+	begin
+		perform users.add_function(thefunction);
+		select into functionid get_special_group_id
+			from users.get_special_group_id(thefunction);
+		insert into users.permission (func_id) values
+			(functionid);
+		delete from users.function where name = thefunction;
+		return next is_empty(
+			$$select * from users.permission
+				where func_id = '$$ || functionid || $$'$$,
+			'Remove from permission deleted functions.');
+	end
+$test$ language plpgsql;
+/*
+create or replace function test_users_table_permission_col_groupid_exists()
+returns setof text as $test$
+	begin
+		return next has_column('users', 'permission', 'group_id',
+			'The permission table needs a group_id.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_table_permission_col_groupid_is_fk()
+returns setof text as $test$
+	begin
+		return next fk_ok('users', 'permission', 'group_id',
+			'users', 'group', 'id',
+			'Set permissions group id as foreign key to group.');
+	end
+$test$ language plpgsql;
+*/
+
 -- Tests for the web session table.  
 create or replace function test_web_table_session_col_userid_exists()
 returns setof text as $test$
@@ -308,6 +412,18 @@ returns setof text as $test$
 			$$select * from web.session
 				where user_id = '$$ || user_id || $$'$$,
 			'The session should delete with the attached user.');
+	end
+$test$ language plpgsql;
+
+-- Tests for user functions
+create or replace function test_users_permission_creategroup_exists()
+returns setof text as $test$
+	begin
+		return next results_eq(
+			$$select id from users.function
+				where name = 'users.create_group'$$,
+			$$values (users.get_special_group_id('users.create_group'))$$,
+			'There should be a listing for create groups.');
 	end
 $test$ language plpgsql;
 
@@ -1316,6 +1432,66 @@ returns setof text as $test$
 	end
 $test$ language plpgsql;
 
+-- Tests for session based create group
+create or replace function test_users_function_sesscreategroup_exists()
+returns setof text as $test$
+	begin 
+		return next function_returns('users', 'create_group',
+			array['text', 'text'], 'uuid', 
+			'There needs to be a create group function based on session.');
+		return next is_definer('users', 'create_group', 
+			array['text', 'text'], 
+			'Session based create group needs to security definer access.');
+	end;
+$test$ language plpgsql;
+
+create or replace function test_users_function_sesscreategroup_admin_works()
+returns setof text as $test$
+	declare
+		admin_id		uuid;
+		session_id		text;
+		new_group		text;
+		new_group_id	uuid;
+	begin
+		select into admin_id child_id
+			from users.grouplist
+			where name = 'admin'
+			limit 1;
+		select into session_id create_test_session
+			from create_test_session();
+		update web.session
+			set user_id = admin_id
+			where sess_id = session_id;
+		select into new_group get_unused_test_group_name
+			from get_unused_test_group_name();
+		select into new_group_id create_group
+			from users.create_group(session_id, new_group);
+		return next results_eq(
+			$$select name from users.group
+				where id = '$$ || new_group_id || $$'$$,
+			$$values ('$$ || new_group || $$')$$,
+			'Admin must be able to create a group.');
+	end
+$test$ language plpgsql;
+
+create or replace function test_users_function_sesscreategroup_permission_denied()
+returns setof text as $test$
+	declare
+		session_id		text;
+		new_group		text;
+	begin
+		select into session_id sess_id
+			from get_logged_in_test_user();
+		select into new_group get_unused_test_group_name
+			from get_unused_test_group_name();
+		return next throws_ok(
+			$$select users.create_group('$$ || session_id || $$',
+				'$$ || new_group || $$')$$,
+			'ND001', 'Permission Denied',
+			'Create group should deny permission to those without rights.');
+	end
+$test$ language plpgsql;
+
 -- Installation/Update function
 create or replace function correct_users()
 returns setof text as $func$
@@ -1434,6 +1610,68 @@ returns setof text as $func$
 				add column password text;
 			return next 'Added the users.user.password column.';
 		end if;
+		
+		if failed_test('test_users_table_function_exists') then
+			create table users.function();
+			return next 'Created the user function table.';
+		end if;
+		if failed_test('test_users_table_function_col_name_exists') then
+			alter table users.function
+				add column name text;
+			return next 'Added the name column to the function table.';
+		end if;
+		if failed_test('test_users_table_function_col_name_is_pk') then
+			alter table users.function 
+				add primary key (name);
+			return next 'Made name the primary key of users.function.';
+		end if;
+		if failed_test('test_users_table_function_col_id_exists') then
+			alter table users.function
+				add column id uuid;
+			return next 'Added the id column to users.function.';
+		end if;
+		if failed_test('test_users_table_function_index_id_exists') then
+			drop index if exists users.function_id;
+			create unique index function_id on users.function (id);
+			return next 'Created the function id index.';
+		end if;
+		
+		if failed_test('test_users_table_permission_exists') then
+			create table users.permission();
+			return next 'Created the user permission table.';
+		end if;
+		if failed_test('test_users_table_permission_col_functionid_exists') then
+			alter table users.permission
+				add column func_id uuid;
+			return next 'Created the function id column for permissions.';
+		end if;
+		if failed_test('test_users_table_premission_col_functionid_is_fk') or
+		failed_test('test_users_table_permission_col_functionid_deletes') then
+			alter table users.permission
+				drop constraint if exists permission_function_id;
+			alter table users.permission
+				add constraint permission_function_id
+				foreign key (func_id)
+				references users.function (id)
+				on delete cascade;
+			return next 'Added the foreign key constraint to permission function ids.';
+		end if;
+		/*
+		if failed_test('test_users_table_permission_col_groupid_exists') then
+			alter table users.permission
+				add column group_id uuid;
+			return next 'Created the users.permission.group_id column';
+		end if;
+		if failed_test('test_users_table_permission_col_groupid_is_fk') then
+			alter table users.permission
+				drop constraint if exists permission_group_id;
+			alter table users.permission
+				add constraint permission_group_id
+				foreign key (group_id)
+				references users.group (id);
+			return next 'Added the foreign key constraint to permission group_id.';
+		end if;
+		*/
 		
 		if failed_test('test_web_table_session_col_userid_exists') then
 			alter table web.session
@@ -1588,6 +1826,16 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.get_special_group_id.';
 		
+		create or replace function users.add_function(
+			function_name	text)
+		returns void as $$
+			begin
+				insert into users.function (name, id) values
+					(function_name, users.get_special_group_id(function_name));
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		
 		create or replace function users.create_special_group(
 			group_name		text)
 		returns void as $$
@@ -1621,6 +1869,27 @@ returns setof text as $func$
 		$$ language plpgsql security definer
 		set search_path = users, pg_temp;
 		return next 'Created function users.create_group.';
+		
+		create or replace function users.create_group(
+			session_id		text,
+			group_name		text)
+		returns uuid as $$
+			declare
+				user_id		uuid;
+			begin
+				select into user_id id
+					from users.group_members(users.get_special_group_id('admin'))
+					where id = (select web.session.user_id from web.session
+						where web.session.sess_id = session_id);
+				if found then
+					return users.create_group(group_name);
+				else
+					raise 'Permission Denied' using errcode = 'ND001';
+				end if;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created session based function users.create_group.';		
 		
 		create or replace function users.delete_group(
 			group_name		text)
@@ -1810,6 +2079,41 @@ returns setof text as $func$
 		set search_path = users, pg_temp;
 		return next 'Created function users.group_members.';		
 				
+		create or replace function users.group_members(
+			group_id		uuid)
+		returns table(
+			id				uuid,
+			name 			text, 
+			is_group 		boolean)
+		as $$
+			begin
+				return query 
+					with recursive grouping(id, name, child_id, is_group)
+					as (
+						select users.grouplist.id, 
+							users.grouplist.name, 
+							users.grouplist.child_id, 
+							users.grouplist.is_group
+						from users.grouplist
+						where users.grouplist.id = group_id
+						union
+						select users.grouplist.id,
+							users.grouplist.name,
+							users.grouplist.child_id,
+							users.grouplist.is_group
+						from 
+							users.grouplist,
+							grouping
+						where
+							grouping.child_id = users.grouplist.id
+						)
+					select grouping.id, grouping.name, grouping.is_group 
+						from grouping;
+			end
+		$$ language plpgsql security definer
+		set search_path = users, pg_temp;
+		return next 'Created function users.group_members.';		
+
 		-- Set permissions
 		revoke all on function
 			-- triggers
@@ -1820,7 +2124,12 @@ returns setof text as $func$
 			-- Admin functions
 			users.get_special_group_id(
 				group_name		text),
+			users.add_function(
+				function_name	text),
 			users.create_group(
+				group_name		text),
+			users.create_group(
+				session_id		text,
 				group_name		text),
 			users.delete_group(
 				group_name		text),
@@ -1861,12 +2170,21 @@ returns setof text as $func$
 				user_name		text,
 				user_password	text),
 			users.logout(
-				session_id		text)
+				session_id		text),
+			users.create_group(
+				session_id		text,
+				group_name		text)
 		to nodepg;
 
 		grant usage on schema users to nodepg;
 		
 		return next 'Premissions set';
+		
+		-- Add permission functions
+		if failed_test('test_users_permission_creategroup_exists') then
+			perform users.add_function('users.create_group');
+			return next 'Added create group to the permissions list.';
+		end if;
 
 		-- Create special users and groups
 		if failed_test('test_users_special_user_anonymous_exists') then
